@@ -81,7 +81,7 @@ export default function ProductForm({ product, onSave, onCancel, loading }) {
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 btn-primary flex items-center justify-center gap-2"
+              className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-medium px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
               {loading ? 'Guardando…' : 'Guardar'}

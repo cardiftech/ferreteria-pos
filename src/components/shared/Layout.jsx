@@ -1,12 +1,15 @@
 import Navbar from './Navbar';
+import BottomNav from './BottomNav';
 
 export default function Layout({ children }) {
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="flex flex-col min-h-screen bg-gray-100">
       <Navbar />
-      <main className="flex-1 overflow-auto">
+      {/* pb-14 deja espacio para el BottomNav fijo */}
+      <main className="flex-1 pb-14">
         {children}
       </main>
+      <BottomNav />
     </div>
   );
 }
