@@ -1,0 +1,6 @@
+{
+  "name": "ferreteria-pos",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite"
+}
