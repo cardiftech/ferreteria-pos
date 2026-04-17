@@ -18,7 +18,13 @@ export function useSearch(products, query) {
 
   return useMemo(() => {
     const trimmed = query?.trim() ?? '';
-    if (trimmed.length < 2) return products.slice(0, 30);
+    if (trimmed.length === 0) return [];
+    // Búsqueda exacta por código de barras primero
+    if (trimmed.length < 2) {
+      return products.filter((p) =>
+        String(p.Codigo_Barras).startsWith(trimmed)
+      );
+    }
     return fuse.search(trimmed).map((r) => r.item);
   }, [fuse, query, products]);
 }
