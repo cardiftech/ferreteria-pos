@@ -44,17 +44,16 @@ export default function POS() {
     setSearchMode(false);
   };
 
-  // ── Escáner: busca por código exacto ──────────────────────────────────────
-  const handleScan = (barcode) => {
-    setScanning(false);
+  // ── Escáner continuo: no cierra el modal, usa feedback inline ────────────
+  const handleScan = (barcode, showFeedback) => {
     const found = products.find(
       (p) => String(p.Codigo_Barras).trim() === barcode.trim()
     );
     if (found) {
       handleAdd(found);
-      notify(`✓ ${found.Producto} agregado`, 'success');
+      showFeedback?.(`✓ ${found.Producto}`, true);
     } else {
-      notify(`Código no encontrado: ${barcode}`, 'error');
+      showFeedback?.(`No encontrado: ${barcode}`, false);
     }
   };
 
@@ -291,7 +290,13 @@ export default function POS() {
 
       {/* ── Modales ────────────────────────────────────────────────────── */}
       {scanning && (
-        <BarcodeScanner onScan={handleScan} onClose={() => setScanning(false)} />
+        <BarcodeScanner
+          onScan={handleScan}
+          onClose={() => setScanning(false)}
+          cartCount={cart.items.reduce((s, i) => s + i.quantity, 0)}
+          cartTotal={total}
+          onCheckout={() => { setScanning(false); setShowPay(true); }}
+        />
       )}
 
       {showPay && (
