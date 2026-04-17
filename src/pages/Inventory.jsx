@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Search, ChevronDown } from 'lucide-react';
+import { Plus, RefreshCw, Search, ChevronDown, ScanLine } from 'lucide-react';
 import { useInventory }          from '../hooks/useInventory';
 import { useSearch }             from '../hooks/useSearch';
 import { useApp }                from '../context/AppContext';
@@ -7,6 +7,7 @@ import { api }                   from '../services/api';
 import { updateLocalProduct }    from '../services/sync';
 import ProductTable              from '../components/inventory/ProductTable';
 import ProductForm               from '../components/inventory/ProductForm';
+import BarcodeScanner            from '../components/pos/BarcodeScanner';
 
 const PAGE_SIZE = 30;
 
@@ -14,8 +15,10 @@ export default function Inventory() {
   const [query, setQuery]       = useState('');
   const [editProduct, setEdit]  = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [formMode, setFormMode] = useState('new');
   const [saving, setSaving]     = useState(false);
   const [visible, setVisible]   = useState(PAGE_SIZE);
+  const [scanInventory, setScanInventory] = useState(false);
 
   const { products, loading, reload } = useInventory();
   const { notify, state, sync }       = useApp();
@@ -30,24 +33,41 @@ export default function Inventory() {
     (p) => Number(p.Stock_Actual) <= Number(p.Stock_Minimo)
   ).length;
 
-  const openEdit  = (p) => { setEdit(p);    setShowForm(true); };
-  const openNew   = ()  => { setEdit(null); setShowForm(true); };
+  const openEdit  = (p) => { setEdit(p); setFormMode('edit'); setShowForm(true); };
+  const openNew   = ()  => { setEdit(null); setFormMode('new'); setShowForm(true); };
   const closeForm = ()  => setShowForm(false);
 
-  const handleSave = async (data) => {
+  const handleInventoryScan = (barcode) => {
+    setScanInventory(false);
+    const found = products.find(
+      (p) => String(p.Codigo_Barras).trim() === barcode.trim()
+    );
+    if (found) {
+      setEdit(found);
+      setFormMode('restock');
+    } else {
+      setEdit({ Codigo_Barras: barcode });
+      setFormMode('new');
+    }
+    setShowForm(true);
+  };
+
+  const handleSave = async (data, mode) => {
     if (!state.isOnline) {
       notify('Sin conexión — no se pueden guardar cambios', 'error');
       return;
     }
     setSaving(true);
     try {
-      const result = editProduct
-        ? await api.updateProduct(data)
-        : await api.addProduct(data);
+      const isNew = mode === 'new';
+      const result = isNew
+        ? await api.addProduct(data)
+        : await api.updateProduct(data);
       if (result?.error) throw new Error(result.error);
       await updateLocalProduct(data);
       await reload();
-      notify(editProduct ? 'Producto actualizado' : 'Producto agregado', 'success');
+      const msg = isNew ? 'Producto agregado' : mode === 'restock' ? 'Stock actualizado' : 'Producto actualizado';
+      notify(msg, 'success');
       closeForm();
     } catch (err) {
       notify(err.message || 'Error al guardar', 'error');
@@ -92,6 +112,15 @@ export default function Inventory() {
           >
             <RefreshCw size={14} />
             <span className="hidden sm:inline">Sincronizar</span>
+          </button>
+          <button
+            onClick={() => setScanInventory(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200
+                       rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50
+                       transition-colors shadow-sm"
+          >
+            <ScanLine size={14} />
+            <span className="hidden sm:inline">Escanear</span>
           </button>
           <button
             onClick={openNew}
@@ -154,9 +183,20 @@ export default function Inventory() {
       {showForm && (
         <ProductForm
           product={editProduct}
+          mode={formMode}
           onSave={handleSave}
           onCancel={closeForm}
           loading={saving}
+        />
+      )}
+
+      {scanInventory && (
+        <BarcodeScanner
+          onScan={(barcode) => handleInventoryScan(barcode)}
+          onClose={() => setScanInventory(false)}
+          cartCount={0}
+          cartTotal={0}
+          onCheckout={() => setScanInventory(false)}
         />
       )}
 
