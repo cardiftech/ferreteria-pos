@@ -296,6 +296,9 @@ export default function POS() {
           cartCount={cart.items.reduce((s, i) => s + i.quantity, 0)}
           cartTotal={total}
           onCheckout={() => { setScanning(false); setShowPay(true); }}
+          cartItems={cart.items}
+          onRemoveItem={removeItem}
+          onUpdateQuantity={updateQuantity}
         />
       )}
 
