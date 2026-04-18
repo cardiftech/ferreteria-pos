@@ -24,8 +24,9 @@ function doGet(e) {
   const action = (e.parameter && e.parameter.action) || 'getInventory';
 
   try {
-    if (action === 'getInventory') return jsonOk(getInventory_());
-    if (action === 'ping')         return jsonOk({ status: 'ok', ts: new Date().toISOString() });
+    if (action === 'getInventory')   return jsonOk(getInventory_());
+    if (action === 'getSalesReport') return jsonOk(getSalesReport_());
+    if (action === 'ping')           return jsonOk({ status: 'ok', ts: new Date().toISOString() });
     return jsonErr('Acción GET desconocida: ' + action, 400);
   } catch (err) {
     return jsonErr(err.message, 500);
@@ -74,6 +75,63 @@ function getInventory_() {
   });
 
   return { data: data, timestamp: now_(), count: data.length };
+}
+
+/**
+ * Devuelve inventario completo + todas las ventas para el panel admin.
+ */
+function getSalesReport_() {
+  var ss = SpreadsheetApp.openById(SS_ID);
+
+  // ── Inventario ──
+  var invSheet   = ss.getSheetByName(TAB_INVENTORY);
+  var invValues  = invSheet.getDataRange().getValues();
+  var invHeaders = invValues[0];
+  var products   = invValues.slice(1).map(function(row) {
+    var obj = {};
+    invHeaders.forEach(function(h, i) { obj[h] = row[i]; });
+    return {
+      Codigo_Barras: String(obj.Codigo_Barras || ''),
+      Producto:      String(obj.Producto      || ''),
+      Categoria:     String(obj.Categoria     || ''),
+      Stock_Actual:  Number(obj.Stock_Actual)  || 0,
+      Stock_Minimo:  Number(obj.Stock_Minimo)  || 0,
+      Precio_Venta:  Number(obj.Precio_Venta)  || 0,
+    };
+  });
+
+  // ── Ventas ──
+  var salesSheet  = ss.getSheetByName(TAB_SALES);
+  var salesValues = salesSheet.getDataRange().getValues();
+  var sales = [];
+
+  if (salesValues.length > 1) {
+    var sHeaders = salesValues[0];
+    sales = salesValues.slice(1).map(function(row) {
+      var obj = {};
+      sHeaders.forEach(function(h, i) { obj[h] = row[i]; });
+
+      // Fecha puede llegar como Date object o string ISO
+      var fechaRaw = obj.Fecha;
+      var fechaStr = '';
+      if (fechaRaw instanceof Date) {
+        fechaStr = fechaRaw.toISOString();
+      } else if (fechaRaw) {
+        fechaStr = String(fechaRaw);
+      }
+
+      return {
+        ID_Venta:    String(obj.ID_Venta     || ''),
+        Fecha:       fechaStr,
+        Productos:   String(obj.Productos    || '[]'),
+        Total:       Number(obj.Total)        || 0,
+        Metodo_Pago: String(obj.Metodo_Pago  || ''),
+        Cliente:     String(obj.Cliente      || ''),
+      };
+    }).reverse(); // más reciente primero
+  }
+
+  return { products: products, sales: sales, timestamp: now_() };
 }
 
 /**
