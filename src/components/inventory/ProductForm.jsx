@@ -19,13 +19,14 @@ const EMPTY = {
 
 // ── Modo Restock ──────────────────────────────────────────────────────────────
 function RestockForm({ product, onSave, onCancel, loading }) {
-  const [qty, setQty] = useState(1);
+  const [qty, setQty] = useState('1');
   const current  = Number(product.Stock_Actual);
-  const newStock = current + qty;
+  const qtyNum   = Math.max(0, parseInt(qty) || 0);
+  const newStock = current + qtyNum;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (qty <= 0) return;
+    if (qtyNum <= 0) return;
     onSave({ ...product, Stock_Actual: newStock }, 'restock');
   };
 
@@ -60,7 +61,7 @@ function RestockForm({ product, onSave, onCancel, loading }) {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                onClick={() => setQty(String(Math.max(1, (parseInt(qty) || 1) - 1)))}
                 className="w-11 h-11 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center
                            justify-center transition-colors flex-shrink-0"
               >
@@ -70,13 +71,14 @@ function RestockForm({ product, onSave, onCancel, loading }) {
                 type="number"
                 min={1}
                 value={qty}
-                onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                onChange={(e) => setQty(e.target.value)}
+                onBlur={() => setQty(String(Math.max(1, parseInt(qty) || 1)))}
                 className="flex-1 text-center text-2xl font-bold border border-gray-200
                            rounded-xl py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
               <button
                 type="button"
-                onClick={() => setQty((q) => q + 1)}
+                onClick={() => setQty(String((parseInt(qty) || 0) + 1))}
                 className="w-11 h-11 rounded-xl bg-orange-500 hover:bg-orange-600 text-white
                            flex items-center justify-center transition-colors flex-shrink-0"
               >
@@ -89,7 +91,7 @@ function RestockForm({ product, onSave, onCancel, loading }) {
           <div className="flex justify-between items-center bg-green-50 rounded-xl px-4 py-3">
             <span className="text-sm text-gray-600">Stock resultante</span>
             <span className="text-xl font-bold text-green-700">
-              {current} + {qty} = <span className="text-2xl">{newStock}</span>
+              {current} + {qtyNum || '…'} = <span className="text-2xl">{qtyNum > 0 ? newStock : '—'}</span>
             </span>
           </div>
 
@@ -100,7 +102,7 @@ function RestockForm({ product, onSave, onCancel, loading }) {
             </button>
             <button
               type="submit"
-              disabled={loading || qty <= 0}
+              disabled={loading || qtyNum <= 0}
               className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-medium px-4 py-2.5
                          rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
