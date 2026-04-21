@@ -8,19 +8,22 @@ export default function ProductTable({ products, onEdit }) {
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap text-xs uppercase tracking-wide">
-                Código
+                Bar code
               </th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide">
-                Producto
+                Descripción
               </th>
               <th className="text-left px-4 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide hidden md:table-cell">
-                Categoría
+                Marca
               </th>
               <th className="text-right px-4 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide">
                 Stock
               </th>
+              <th className="text-right px-4 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide hidden sm:table-cell">
+                A1 / A2
+              </th>
               <th className="text-right px-4 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide">
-                Precio
+                P. Público
               </th>
               <th className="px-4 py-3 w-10" />
             </tr>
@@ -29,25 +32,27 @@ export default function ProductTable({ products, onEdit }) {
             {products.map((p) => {
               const stock    = Number(p.Stock_Actual);
               const minStock = Number(p.Stock_Minimo);
-              const price    = Number(p.Precio_Venta);
+              const price    = Number(p.Precio_publico_IVA);
+              const a1       = Number(p.Almacen_1);
+              const a2       = Number(p.Almacen_2);
               const out      = stock <= 0;
               const low      = !out && stock <= minStock;
 
               return (
                 <tr
-                  key={p.Codigo_Barras}
+                  key={p.Bar_code}
                   className={[
                     'hover:bg-gray-50 transition-colors',
-                    out ? 'bg-red-50 hover:bg-red-50'    : '',
+                    out ? 'bg-red-50 hover:bg-red-50'       : '',
                     low ? 'bg-orange-50 hover:bg-orange-50' : '',
                   ].join(' ')}
                 >
-                  {/* Código */}
+                  {/* Bar code */}
                   <td className="px-4 py-3 font-mono text-xs text-gray-400 whitespace-nowrap">
-                    {p.Codigo_Barras}
+                    {p.Bar_code}
                   </td>
 
-                  {/* Producto */}
+                  {/* Descripción */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       {p.Imagen ? (
@@ -61,18 +66,25 @@ export default function ProductTable({ products, onEdit }) {
                           <Package size={14} className="text-blue-300" />
                         </div>
                       )}
-                      <span className="font-medium text-gray-900">{p.Producto}</span>
+                      <div>
+                        <p className="font-medium text-gray-900 leading-snug">{p.Descripcion}</p>
+                        {p.Clave && (
+                          <p className="text-xs text-gray-400">{p.Clave}</p>
+                        )}
+                      </div>
                     </div>
                   </td>
 
-                  {/* Categoría */}
+                  {/* Marca */}
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
-                      {p.Categoria}
-                    </span>
+                    {p.Marca && (
+                      <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
+                        {p.Marca}
+                      </span>
+                    )}
                   </td>
 
-                  {/* Stock */}
+                  {/* Stock total */}
                   <td className="px-4 py-3 text-right">
                     <span
                       className={[
@@ -86,9 +98,18 @@ export default function ProductTable({ products, onEdit }) {
                     </span>
                   </td>
 
-                  {/* Precio */}
+                  {/* Almacenes */}
+                  <td className="px-4 py-3 text-right hidden sm:table-cell">
+                    <span className="text-xs text-gray-500">
+                      <span className="text-blue-600 font-medium">{a1}</span>
+                      <span className="text-gray-300 mx-1">/</span>
+                      <span className="text-indigo-600 font-medium">{a2}</span>
+                    </span>
+                  </td>
+
+                  {/* Precio público */}
                   <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
-                    ${price.toLocaleString('es-CO')}
+                    ${price.toLocaleString('es-MX')}
                   </td>
 
                   {/* Editar */}

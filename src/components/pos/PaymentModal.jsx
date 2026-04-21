@@ -7,10 +7,10 @@ const METHODS = [
   { id: 'Transferencia', label: 'Transferencia',  Icon: ArrowLeftRight },
 ];
 
-export default function PaymentModal({ total, defaultMethod = 'Efectivo', onConfirm, onCancel }) {
+export default function PaymentModal({ total, defaultMethod = 'Efectivo', defaultCustomer = '', onConfirm, onCancel }) {
   const [method, setMethod]         = useState(defaultMethod);
   const [cash, setCash]             = useState('');
-  const [customer, setCustomer]     = useState('');
+  const [customer, setCustomer]     = useState(defaultCustomer);
   const [notes, setNotes]           = useState('');
   const [loading, setLoading]       = useState(false);
 

@@ -6,11 +6,11 @@ function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, c
   const dateStr = format(new Date(timestamp), "dd/MM/yyyy HH:mm", { locale: es });
 
   const itemsRows = items.map((item) => {
-    const subtotal = (Number(item.Precio_Venta) * item.quantity).toLocaleString('es-CO');
-    const unitPrice = Number(item.Precio_Venta).toLocaleString('es-CO');
+    const subtotal  = (item.activePrice * item.quantity).toLocaleString('es-MX');
+    const unitPrice = item.activePrice.toLocaleString('es-MX');
     return `
       <tr>
-        <td class="item-name">${item.quantity}&times; ${item.Producto}</td>
+        <td class="item-name">${item.quantity}&times; ${item.Descripcion}</td>
         <td class="right bold">$${subtotal}</td>
       </tr>
       <tr>
@@ -223,12 +223,12 @@ export default function Receipt({ sale, onClose }) {
 
           <div className="space-y-1">
             {items.map((item) => (
-              <div key={item.Codigo_Barras} className="flex justify-between gap-2">
+              <div key={item.Bar_code} className="flex justify-between gap-2">
                 <span className="text-gray-700 truncate">
-                  {item.quantity}× {item.Producto}
+                  {item.quantity}× {item.Descripcion}
                 </span>
                 <span className="font-medium text-gray-900 flex-shrink-0">
-                  ${(Number(item.Precio_Venta) * item.quantity).toLocaleString('es-CO')}
+                  ${(item.activePrice * item.quantity).toLocaleString('es-MX')}
                 </span>
               </div>
             ))}

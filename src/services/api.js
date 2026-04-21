@@ -17,7 +17,6 @@ async function request({ method = 'GET', params = {}, body } = {}) {
   const res = await fetch(url, {
     method,
     redirect: 'follow',
-    // Sin Content-Type para evitar preflight CORS con GAS
     ...(body !== undefined && { body: JSON.stringify(body) }),
   });
 
@@ -33,6 +32,9 @@ export const api = {
   getInventory: () =>
     request({ params: { action: 'getInventory' } }),
 
+  getClients: () =>
+    request({ params: { action: 'getClients' } }),
+
   registerSale: (data) =>
     request({ method: 'POST', body: { action: 'registerSale', ...data } }),
 
@@ -41,6 +43,9 @@ export const api = {
 
   addProduct: (product) =>
     request({ method: 'POST', body: { action: 'addProduct', product } }),
+
+  addClient: (client) =>
+    request({ method: 'POST', body: { action: 'addClient', client } }),
 
   ping: () =>
     request({ params: { action: 'ping' } }),

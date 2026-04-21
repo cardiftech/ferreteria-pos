@@ -18,7 +18,8 @@ const COOLDOWN_MS    = 2000;
 export default function BarcodeScanner({
   onScan, onClose,
   cartCount = 0, cartTotal = 0, onCheckout,
-  cartItems = [], onRemoveItem, onUpdateQuantity,
+  cartItems = [], onRemoveItem, onUpdateQuantity, onSetWarehouse,
+  priceLevel,
 }) {
   const scannerRef  = useRef(null);
   const lastScanned = useRef({});
@@ -103,31 +104,44 @@ export default function BarcodeScanner({
                 {cartItems.map((item) => {
                   const price = Number(item.Precio_Venta);
                   return (
-                    <div key={item.Codigo_Barras} className="flex items-center gap-3 px-4 py-3">
+                    <div key={item.Bar_code} className="flex items-start gap-3 px-4 py-3">
                       {/* Inicial */}
-                      <div className="w-9 h-9 bg-orange-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <div className="w-9 h-9 bg-orange-50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
                         <span className="text-orange-500 font-bold text-sm">
-                          {item.Producto?.[0]?.toUpperCase()}
+                          {item.Descripcion?.[0]?.toUpperCase()}
                         </span>
                       </div>
 
-                      {/* Nombre + precio */}
+                      {/* Nombre + precio + almacén */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{item.Producto}</p>
-                        <p className="text-xs text-gray-400">${price.toLocaleString('es-CO')} c/u</p>
+                        <p className="text-sm font-medium text-gray-900 truncate">{item.Descripcion}</p>
+                        <p className="text-xs text-gray-400">${item.activePrice.toLocaleString('es-MX')} c/u</p>
+                        {onSetWarehouse && (
+                          <div className="flex gap-1 mt-1">
+                            {['Almacen_1', 'Almacen_2'].map(wh => (
+                              <button key={wh}
+                                onClick={() => onSetWarehouse(item.Bar_code, wh)}
+                                className={`px-1.5 py-0.5 text-xs rounded font-medium transition-colors
+                                  ${item.warehouse === wh ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}
+                              >
+                                {wh === 'Almacen_1' ? 'A1' : 'A2'}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* Cantidad */}
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
-                          onClick={() => onUpdateQuantity?.(item.Codigo_Barras, item.quantity - 1)}
+                          onClick={() => onUpdateQuantity?.(item.Bar_code, item.quantity - 1)}
                           className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center"
                         >
                           <Minus size={11} />
                         </button>
                         <span className="w-5 text-center text-sm font-bold">{item.quantity}</span>
                         <button
-                          onClick={() => onUpdateQuantity?.(item.Codigo_Barras, item.quantity + 1)}
+                          onClick={() => onUpdateQuantity?.(item.Bar_code, item.quantity + 1)}
                           disabled={item.quantity >= Number(item.Stock_Actual)}
                           className="w-7 h-7 rounded-full bg-orange-500 hover:bg-orange-600 text-white
                                      flex items-center justify-center disabled:opacity-30"
@@ -139,10 +153,10 @@ export default function BarcodeScanner({
                       {/* Subtotal + eliminar */}
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-sm font-bold text-gray-900 w-16 text-right">
-                          ${(price * item.quantity).toLocaleString('es-CO')}
+                          ${(item.activePrice * item.quantity).toLocaleString('es-MX')}
                         </span>
                         <button
-                          onClick={() => onRemoveItem?.(item.Codigo_Barras)}
+                          onClick={() => onRemoveItem?.(item.Bar_code)}
                           className="w-7 h-7 rounded-full bg-red-50 hover:bg-red-100 text-red-400
                                      flex items-center justify-center"
                         >

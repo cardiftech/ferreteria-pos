@@ -94,10 +94,10 @@ function buildMetrics(sales = [], products = []) {
   salesToday.forEach(s => {
     try {
       JSON.parse(s.Productos || '[]').forEach(item => {
-        const key = item.c || item.Codigo_Barras || item.n;
-        if (!topMap[key]) topMap[key] = { name: item.n || item.Producto || key, qty: 0, revenue: 0 };
+        const key = item.c || item.Bar_code || item.n;
+        if (!topMap[key]) topMap[key] = { name: item.n || item.Descripcion || key, qty: 0, revenue: 0 };
         const q = Number(item.q || item.quantity || 0);
-        const p = Number(item.p || item.Precio_Venta || 0);
+        const p = Number(item.p || item.activePrice || 0);
         topMap[key].qty     += q;
         topMap[key].revenue += q * p;
       });
@@ -108,7 +108,7 @@ function buildMetrics(sales = [], products = []) {
     .slice(0, 5);
 
   const inventoryValue = products.reduce(
-    (sum, p) => sum + Number(p.Stock_Actual || 0) * Number(p.Precio_Venta || 0),
+    (sum, p) => sum + Number(p.Stock_Actual || 0) * Number(p.Precio_publico_IVA || 0),
     0
   );
 
@@ -393,7 +393,7 @@ export default function Dashboard() {
                     const outOfStock = p.Stock_Actual <= 0;
                     return (
                       <div
-                        key={p.Codigo_Barras}
+                        key={p.Bar_code || p.Descripcion}
                         className={`flex items-center px-4 py-3 gap-3
                           ${i < metrics.lowStock.length - 1 ? 'border-b border-gray-50' : ''}
                           ${outOfStock ? 'bg-red-50' : ''}`}
@@ -403,8 +403,8 @@ export default function Dashboard() {
                           <Package size={14} className={outOfStock ? 'text-red-500' : 'text-orange-500'} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">{p.Producto}</p>
-                          <p className="text-xs text-gray-400">{p.Categoria}</p>
+                          <p className="text-sm font-medium text-gray-900 truncate">{p.Descripcion}</p>
+                          <p className="text-xs text-gray-400">{p.Marca}</p>
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className={`text-sm font-bold ${outOfStock ? 'text-red-600' : 'text-orange-600'}`}>

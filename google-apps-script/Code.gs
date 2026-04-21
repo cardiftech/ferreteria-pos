@@ -1,30 +1,47 @@
 /**
- * FerrePOS — Google Apps Script API
- * ===================================
+ * FerrePOS — Google Apps Script API v2
+ * ======================================
  * Despliega como Web App:
  *   Execute as: Me
- *   Who has access: Anyone (o Anyone with Google account para mayor seguridad)
+ *   Who has access: Anyone
  *
- * Luego copia la URL resultante a VITE_GAS_URL en tu archivo .env
+ * Columnas exactas de Google Sheets (sin tildes, sin espacios en el nombre de clave):
+ *
+ * INVENTARIO (A→P):
+ *   Codigo | Clave | Descripcion | Unidad | Bar_code |
+ *   Precio_distribuidor_IVA | Precio_mayoreo_IVA | Precio_medio_mayoreo_IVA | Precio_publico_IVA |
+ *   Codigo_SAT | Marca | Stock_Actual | Stock_Minimo | Imagen | Almacen_1 | Almacen_2
+ *
+ * VENTAS (A→G):
+ *   ID_Venta | Fecha | Productos | Total | Metodo_Pago | Cliente | Pagos
+ *
+ * CLIENTES (A→D):
+ *   ID_Cliente | Nombre | Telefono | Tipo_Precio
  */
 
-// ── CONFIGURACIÓN ────────────────────────────────────────────────────────────
-const SS_ID         = '1gLNQGu7lulgbw1ylRGfoY3YTnePpHoxWzFl5tTt_th4';
-const TAB_INVENTORY = 'INVENTARIO';
-const TAB_SALES     = 'VENTAS';
+// ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
+var SS_ID         = '1gLNQGu7lulgbw1ylRGfoY3YTnePpHoxWzFl5tTt_th4';
+var TAB_INVENTORY = 'INVENTARIO';
+var TAB_SALES     = 'VENTAS';
+var TAB_CLIENTS   = 'CLIENTES';
 
-// Columnas esperadas (orden en la hoja)
-const INV_COLS  = ['Codigo_Barras','Producto','Categoria','Stock_Actual','Precio_Venta','Imagen','Stock_Minimo'];
-const SALE_COLS = ['ID_Venta','Fecha','Productos','Total','Metodo_Pago','Factura_PDF','Cliente','Notas'];
+var INV_COLS = [
+  'Codigo','Clave','Descripcion','Unidad','Bar_code',
+  'Precio_distribuidor_IVA','Precio_mayoreo_IVA','Precio_medio_mayoreo_IVA','Precio_publico_IVA',
+  'Codigo_SAT','Marca','Stock_Actual','Stock_Minimo','Imagen','Almacen_1','Almacen_2'
+];
+
+var SALE_COLS   = ['ID_Venta','Fecha','Productos','Total','Metodo_Pago','Cliente','Pagos'];
+var CLIENT_COLS = ['ID_Cliente','Nombre','Telefono','Tipo_Precio'];
 // ─────────────────────────────────────────────────────────────────────────────
 
 
 // ── GET ───────────────────────────────────────────────────────────────────────
 function doGet(e) {
-  const action = (e.parameter && e.parameter.action) || 'getInventory';
-
+  var action = (e.parameter && e.parameter.action) || 'getInventory';
   try {
     if (action === 'getInventory')   return jsonOk(getInventory_());
+    if (action === 'getClients')     return jsonOk(getClients_());
     if (action === 'getSalesReport') return jsonOk(getSalesReport_());
     if (action === 'ping')           return jsonOk({ status: 'ok', ts: new Date().toISOString() });
     return jsonErr('Acción GET desconocida: ' + action, 400);
@@ -36,17 +53,16 @@ function doGet(e) {
 
 // ── POST ──────────────────────────────────────────────────────────────────────
 function doPost(e) {
-  // Lock para evitar condiciones de carrera en escrituras concurrentes
-  const lock = LockService.getScriptLock();
+  var lock = LockService.getScriptLock();
   lock.waitLock(15000);
-
   try {
-    const payload = JSON.parse(e.postData.contents);
-    const { action } = payload;
+    var payload = JSON.parse(e.postData.contents);
+    var action  = payload.action;
 
     if (action === 'registerSale')  return jsonOk(registerSale_(payload));
     if (action === 'updateProduct') return jsonOk(updateProduct_(payload));
     if (action === 'addProduct')    return jsonOk(addProduct_(payload));
+    if (action === 'addClient')     return jsonOk(addClient_(payload));
 
     return jsonErr('Acción POST desconocida: ' + action, 400);
   } catch (err) {
@@ -59,48 +75,60 @@ function doPost(e) {
 
 // ── HANDLERS ─────────────────────────────────────────────────────────────────
 
-/**
- * Devuelve todo el inventario como array de objetos + timestamp para el cliente.
- */
 function getInventory_() {
-  const sheet  = getSheet_(TAB_INVENTORY);
-  const values = sheet.getDataRange().getValues();
+  var sheet  = getSheet_(TAB_INVENTORY);
+  var values = sheet.getDataRange().getValues();
   if (values.length < 2) return { data: [], timestamp: now_(), count: 0 };
 
-  const headers = values[0];
-  const data    = values.slice(1).map(function(row) {
+  var headers = values[0];
+  var data    = values.slice(1).map(function(row) {
     var obj = {};
-    headers.forEach(function(h, i) { obj[h] = row[i]; });
+    headers.forEach(function(h, i) { obj[String(h)] = row[i]; });
     return obj;
   });
 
   return { data: data, timestamp: now_(), count: data.length };
 }
 
+function getClients_() {
+  var sheet = getSheet_(TAB_CLIENTS);
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return { data: [], timestamp: now_() };
+
+  var headers = values[0];
+  var data    = values.slice(1).map(function(row) {
+    var obj = {};
+    headers.forEach(function(h, i) { obj[String(h)] = row[i]; });
+    return obj;
+  });
+
+  return { data: data, timestamp: now_() };
+}
+
 /**
- * Devuelve inventario completo + todas las ventas para el panel admin.
+ * Devuelve inventario + ventas para el panel admin.
  */
 function getSalesReport_() {
   var ss = SpreadsheetApp.openById(SS_ID);
 
-  // ── Inventario ──
+  // Inventario
   var invSheet   = ss.getSheetByName(TAB_INVENTORY);
   var invValues  = invSheet.getDataRange().getValues();
   var invHeaders = invValues[0];
   var products   = invValues.slice(1).map(function(row) {
     var obj = {};
-    invHeaders.forEach(function(h, i) { obj[h] = row[i]; });
+    invHeaders.forEach(function(h, i) { obj[String(h)] = row[i]; });
     return {
-      Codigo_Barras: String(obj.Codigo_Barras || ''),
-      Producto:      String(obj.Producto      || ''),
-      Categoria:     String(obj.Categoria     || ''),
-      Stock_Actual:  Number(obj.Stock_Actual)  || 0,
-      Stock_Minimo:  Number(obj.Stock_Minimo)  || 0,
-      Precio_Venta:  Number(obj.Precio_Venta)  || 0,
+      Bar_code:          String(obj.Bar_code   || ''),
+      Descripcion:       String(obj.Descripcion || ''),
+      Marca:             String(obj.Marca        || ''),
+      Stock_Actual:      Number(obj.Stock_Actual) || 0,
+      Stock_Minimo:      Number(obj.Stock_Minimo) || 0,
+      Precio_publico_IVA: Number(obj.Precio_publico_IVA) || 0,
     };
   });
 
-  // ── Ventas ──
+  // Ventas
   var salesSheet  = ss.getSheetByName(TAB_SALES);
   var salesValues = salesSheet.getDataRange().getValues();
   var sales = [];
@@ -109,9 +137,8 @@ function getSalesReport_() {
     var sHeaders = salesValues[0];
     sales = salesValues.slice(1).map(function(row) {
       var obj = {};
-      sHeaders.forEach(function(h, i) { obj[h] = row[i]; });
+      sHeaders.forEach(function(h, i) { obj[String(h)] = row[i]; });
 
-      // Fecha puede llegar como Date object o string ISO
       var fechaRaw = obj.Fecha;
       var fechaStr = '';
       if (fechaRaw instanceof Date) {
@@ -121,60 +148,74 @@ function getSalesReport_() {
       }
 
       return {
-        ID_Venta:    String(obj.ID_Venta     || ''),
+        ID_Venta:    String(obj.ID_Venta    || ''),
         Fecha:       fechaStr,
-        Productos:   String(obj.Productos    || '[]'),
-        Total:       Number(obj.Total)        || 0,
-        Metodo_Pago: String(obj.Metodo_Pago  || ''),
-        Cliente:     String(obj.Cliente      || ''),
+        Productos:   String(obj.Productos   || '[]'),
+        Total:       Number(obj.Total)       || 0,
+        Metodo_Pago: String(obj.Metodo_Pago || ''),
+        Cliente:     String(obj.Cliente     || ''),
       };
-    }).reverse(); // más reciente primero
+    }).reverse();
   }
 
   return { products: products, sales: sales, timestamp: now_() };
 }
 
 /**
- * Registra una venta en VENTAS y descuenta el stock en INVENTARIO.
- * Payload esperado: { sale: { total, paymentMethod, customer, notes }, items: [...] }
+ * Registra una venta en VENTAS y descuenta stock en INVENTARIO.
+ * Cada item puede tener `warehouse`: 'Almacen_1' | 'Almacen_2'.
+ * Se descuenta en esa columna Y en Stock_Actual.
  */
 function registerSale_(payload) {
   var sale  = payload.sale  || {};
   var items = payload.items || [];
-
   if (!items.length) throw new Error('La venta no contiene artículos');
 
   var ss       = SpreadsheetApp.openById(SS_ID);
   var invSheet = ss.getSheetByName(TAB_INVENTORY);
   var invData  = invSheet.getDataRange().getValues();
   var headers  = invData[0];
-  var bcCol    = headers.indexOf('Codigo_Barras');
-  var stkCol   = headers.indexOf('Stock_Actual');
 
-  if (bcCol === -1 || stkCol === -1) {
-    throw new Error('Columnas Codigo_Barras o Stock_Actual no encontradas en INVENTARIO');
-  }
+  var bcCol  = indexOrError_(headers, 'Bar_code');
+  var stkCol = indexOrError_(headers, 'Stock_Actual');
+  var a1Col  = indexOrError_(headers, 'Almacen_1');
+  var a2Col  = indexOrError_(headers, 'Almacen_2');
 
-  // Descuenta stock
   items.forEach(function(item) {
     for (var i = 1; i < invData.length; i++) {
-      if (String(invData[i][bcCol]) === String(item.Codigo_Barras)) {
-        var current  = Number(invData[i][stkCol]);
-        var newStock = current - Number(item.quantity);
-        if (newStock < 0) {
-          throw new Error('Stock insuficiente para: ' + item.Producto + ' (disponible: ' + current + ')');
-        }
-        invSheet.getRange(i + 1, stkCol + 1).setValue(newStock);
-        invData[i][stkCol] = newStock; // actualiza copia en memoria para validaciones
-        break;
-      }
+      if (String(invData[i][bcCol]).trim() !== String(item.Bar_code).trim()) continue;
+
+      var curStock = Number(invData[i][stkCol]);
+      var qty      = Number(item.quantity);
+      var newStock = curStock - qty;
+      if (newStock < 0) throw new Error('Stock insuficiente para: ' + item.Descripcion + ' (disponible: ' + curStock + ')');
+
+      // Descuenta Stock_Actual
+      invSheet.getRange(i + 1, stkCol + 1).setValue(newStock);
+      invData[i][stkCol] = newStock;
+
+      // Descuenta el almacén correspondiente
+      var whCol = (item.warehouse === 'Almacen_2') ? a2Col : a1Col;
+      var curWh = Number(invData[i][whCol]);
+      var newWh = Math.max(0, curWh - qty);
+      invSheet.getRange(i + 1, whCol + 1).setValue(newWh);
+      invData[i][whCol] = newWh;
+
+      break;
     }
   });
 
-  // Registra la venta
+  // Registra en VENTAS
   var saleId = 'VTA-' + new Date().getTime();
   var productsSummary = JSON.stringify(items.map(function(i) {
-    return { c: i.Codigo_Barras, n: i.Producto, q: i.quantity, p: i.Precio_Venta };
+    return {
+      c: i.Bar_code,
+      n: i.Descripcion,
+      q: i.quantity,
+      p: i.activePrice,
+      wh: i.warehouse,
+      pl: i.priceLevel,
+    };
   }));
 
   var salesSheet = ss.getSheetByName(TAB_SALES);
@@ -184,69 +225,89 @@ function registerSale_(payload) {
     productsSummary,
     Number(sale.total) || 0,
     sale.paymentMethod || '',
-    '',                  // Factura_PDF (vacío por ahora)
-    sale.customer || '',
-    sale.notes    || '',
+    sale.customer      || '',
+    sale.pagos         || '',
   ]);
 
   return { success: true, saleId: saleId, timestamp: now_() };
 }
 
 /**
- * Actualiza los campos de un producto existente (búsqueda por Codigo_Barras).
- * Payload esperado: { product: { Codigo_Barras, ...campos } }
+ * Actualiza los campos de un producto (búsqueda por Bar_code).
  */
 function updateProduct_(payload) {
   var product = payload.product || {};
-  if (!product.Codigo_Barras) throw new Error('Codigo_Barras es obligatorio');
+  if (!product.Bar_code) throw new Error('Bar_code es obligatorio');
 
   var sheet   = getSheet_(TAB_INVENTORY);
   var data    = sheet.getDataRange().getValues();
   var headers = data[0];
-  var bcCol   = headers.indexOf('Codigo_Barras');
+  var bcCol   = indexOrError_(headers, 'Bar_code');
 
   for (var i = 1; i < data.length; i++) {
-    if (String(data[i][bcCol]) === String(product.Codigo_Barras)) {
-      headers.forEach(function(h, j) {
-        if (product[h] !== undefined && product[h] !== null) {
-          sheet.getRange(i + 1, j + 1).setValue(product[h]);
-        }
-      });
-      return { success: true, message: 'Producto actualizado' };
-    }
+    if (String(data[i][bcCol]).trim() !== String(product.Bar_code).trim()) continue;
+    headers.forEach(function(h, j) {
+      if (product[h] !== undefined && product[h] !== null) {
+        sheet.getRange(i + 1, j + 1).setValue(product[h]);
+      }
+    });
+    return { success: true, message: 'Producto actualizado' };
   }
 
-  throw new Error('Producto no encontrado: ' + product.Codigo_Barras);
+  throw new Error('Producto no encontrado: ' + product.Bar_code);
 }
 
 /**
  * Agrega un nuevo producto al inventario.
- * Payload esperado: { product: { Codigo_Barras, Producto, ... } }
  */
 function addProduct_(payload) {
   var product = payload.product || {};
-  if (!product.Codigo_Barras) throw new Error('Codigo_Barras es obligatorio');
+  if (!product.Bar_code) throw new Error('Bar_code es obligatorio');
 
   var sheet   = getSheet_(TAB_INVENTORY);
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
-  // Verificar duplicado
   var data  = sheet.getDataRange().getValues();
-  var bcCol = headers.indexOf('Codigo_Barras');
+  var bcCol = headers.indexOf('Bar_code');
   for (var i = 1; i < data.length; i++) {
-    if (String(data[i][bcCol]) === String(product.Codigo_Barras)) {
-      throw new Error('Ya existe un producto con ese código: ' + product.Codigo_Barras);
+    if (String(data[i][bcCol]).trim() === String(product.Bar_code).trim()) {
+      throw new Error('Ya existe un producto con ese Bar_code: ' + product.Bar_code);
     }
   }
 
   var row = headers.map(function(h) { return product[h] !== undefined ? product[h] : ''; });
   sheet.appendRow(row);
-
   return { success: true, message: 'Producto agregado' };
+}
+
+/**
+ * Agrega un nuevo cliente a CLIENTES.
+ */
+function addClient_(payload) {
+  var client = payload.client || {};
+  if (!client.Nombre) throw new Error('Nombre es obligatorio');
+
+  var sheet = getSheet_(TAB_CLIENTS);
+  var id    = 'CLI-' + new Date().getTime();
+
+  sheet.appendRow([
+    id,
+    client.Nombre      || '',
+    client.Telefono    || '',
+    client.Tipo_Precio || 'Precio_publico_IVA',
+  ]);
+
+  return { success: true, ID_Cliente: id };
 }
 
 
 // ── UTILIDADES ────────────────────────────────────────────────────────────────
+
+function indexOrError_(headers, col) {
+  var idx = headers.indexOf(col);
+  if (idx === -1) throw new Error('Columna no encontrada en INVENTARIO: ' + col);
+  return idx;
+}
 
 function getSheet_(name) {
   var sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(name);
@@ -273,7 +334,7 @@ function jsonErr(msg, code) {
 
 // ── SETUP INICIAL (ejecutar una sola vez manualmente) ─────────────────────────
 /**
- * Crea las pestañas INVENTARIO y VENTAS con sus cabeceras si no existen.
+ * Crea las pestañas INVENTARIO, VENTAS y CLIENTES con sus cabeceras si no existen.
  * En el editor de Apps Script: selecciona esta función y pulsa ▶ Run.
  */
 function setupSheets() {
@@ -283,18 +344,20 @@ function setupSheets() {
     var sheet = ss.getSheetByName(name);
     if (!sheet) {
       sheet = ss.insertSheet(name);
-      sheet.getRange(1, 1, 1, cols.length).setValues([cols]);
-      sheet.getRange(1, 1, 1, cols.length)
-        .setFontWeight('bold')
-        .setBackground('#1e40af')
-        .setFontColor('#ffffff');
-      sheet.setFrozenRows(1);
     }
+    // Siempre actualiza la cabecera (no borra datos)
+    sheet.getRange(1, 1, 1, cols.length).setValues([cols]);
+    sheet.getRange(1, 1, 1, cols.length)
+      .setFontWeight('bold')
+      .setBackground('#1e40af')
+      .setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
     return sheet;
   }
 
   ensureSheet(TAB_INVENTORY, INV_COLS);
   ensureSheet(TAB_SALES,     SALE_COLS);
+  ensureSheet(TAB_CLIENTS,   CLIENT_COLS);
 
   SpreadsheetApp.getUi().alert('✅ Pestañas configuradas correctamente.');
 }

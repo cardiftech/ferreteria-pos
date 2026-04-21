@@ -40,13 +40,13 @@ export default function Inventory() {
   const handleInventoryScan = (barcode) => {
     setScanInventory(false);
     const found = products.find(
-      (p) => String(p.Codigo_Barras).trim() === barcode.trim()
+      (p) => String(p.Bar_code).trim() === barcode.trim()
     );
     if (found) {
       setEdit(found);
       setFormMode('restock');
     } else {
-      setEdit({ Codigo_Barras: barcode });
+      setEdit({ Bar_code: barcode });
       setFormMode('new');
     }
     setShowForm(true);

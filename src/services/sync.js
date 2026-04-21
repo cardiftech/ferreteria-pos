@@ -1,8 +1,8 @@
 import db from './db';
 import { api } from './api';
 
-const SYNC_KEY = 'lastSync';
-const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutos
+const SYNC_KEY         = 'lastSync';
+const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 
 export async function getLastSyncTime() {
   const meta = await db.syncMeta.get(SYNC_KEY);
@@ -15,7 +15,7 @@ export async function shouldSync() {
   return Date.now() - new Date(last).getTime() > SYNC_INTERVAL_MS;
 }
 
-// Google Sheets a veces devuelve "$185.00" o "185,00" — normalizamos a número limpio
+// Google Sheets puede devolver "$1,250.00" → parseamos a número limpio
 function parseNum(val) {
   if (val === null || val === undefined || val === '') return 0;
   return parseFloat(String(val).replace(/[$,\s]/g, '')) || 0;
@@ -24,21 +24,31 @@ function parseNum(val) {
 function normalizeProduct(p) {
   return {
     ...p,
-    Precio_Venta: parseNum(p.Precio_Venta),
-    Stock_Actual: parseNum(p.Stock_Actual),
-    Stock_Minimo: parseNum(p.Stock_Minimo),
+    Precio_distribuidor_IVA:  parseNum(p.Precio_distribuidor_IVA),
+    Precio_mayoreo_IVA:       parseNum(p.Precio_mayoreo_IVA),
+    Precio_medio_mayoreo_IVA: parseNum(p.Precio_medio_mayoreo_IVA),
+    Precio_publico_IVA:       parseNum(p.Precio_publico_IVA),
+    Stock_Actual:             parseNum(p.Stock_Actual),
+    Stock_Minimo:             parseNum(p.Stock_Minimo),
+    Almacen_1:                parseNum(p.Almacen_1),
+    Almacen_2:                parseNum(p.Almacen_2),
+  };
+}
+
+function normalizeClient(c) {
+  return {
+    ID_Cliente:  String(c.ID_Cliente  || ''),
+    Nombre:      String(c.Nombre      || ''),
+    Telefono:    String(c.Telefono    || ''),
+    Tipo_Precio: String(c.Tipo_Precio || 'Precio_publico_IVA'),
   };
 }
 
 export async function syncInventory() {
   const { data, timestamp, count } = await api.getInventory();
-
-  if (!Array.isArray(data)) {
-    throw new Error('Formato de inventario inválido recibido del servidor');
-  }
+  if (!Array.isArray(data)) throw new Error('Formato de inventario inválido');
 
   const clean = data.map(normalizeProduct);
-
   await db.transaction('rw', db.inventory, db.syncMeta, async () => {
     await db.inventory.clear();
     await db.inventory.bulkPut(clean);
@@ -46,6 +56,20 @@ export async function syncInventory() {
   });
 
   return { timestamp, count };
+}
+
+export async function syncClients() {
+  try {
+    const { data } = await api.getClients();
+    if (!Array.isArray(data)) return;
+    const clean = data.map(normalizeClient);
+    await db.transaction('rw', db.clients, async () => {
+      await db.clients.clear();
+      await db.clients.bulkPut(clean);
+    });
+  } catch (_) {
+    // Clientes son opcionales — no romper si la hoja no existe aún
+  }
 }
 
 export async function updateLocalProduct(product) {

@@ -3,9 +3,11 @@ import Fuse from 'fuse.js';
 
 const FUSE_OPTIONS = {
   keys: [
-    { name: 'Producto',      weight: 0.6 },
-    { name: 'Codigo_Barras', weight: 0.3 },
-    { name: 'Categoria',     weight: 0.1 },
+    { name: 'Descripcion', weight: 0.55 },
+    { name: 'Bar_code',    weight: 0.25 },
+    { name: 'Marca',       weight: 0.12 },
+    { name: 'Clave',       weight: 0.05 },
+    { name: 'Codigo',      weight: 0.03 },
   ],
   threshold: 0.35,
   includeScore: true,
@@ -18,13 +20,13 @@ export function useSearch(products, query) {
 
   return useMemo(() => {
     const trimmed = query?.trim() ?? '';
-    // Sin query → devuelve todo (el llamador decide si mostrar o no)
     if (trimmed.length === 0) return products;
     if (trimmed.length < 2) {
-      return products.filter((p) =>
-        String(p.Codigo_Barras).startsWith(trimmed)
+      return products.filter(p =>
+        String(p.Bar_code).startsWith(trimmed) ||
+        String(p.Codigo).startsWith(trimmed)
       );
     }
-    return fuse.search(trimmed).map((r) => r.item);
+    return fuse.search(trimmed).map(r => r.item);
   }, [fuse, query, products]);
 }

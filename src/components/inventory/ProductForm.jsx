@@ -2,19 +2,36 @@ import { useState, useEffect } from 'react';
 import { X, Save, Loader2, ScanLine, Plus, Minus } from 'lucide-react';
 import BarcodeScanner from '../pos/BarcodeScanner';
 
+// ── Definición de campos ──────────────────────────────────────────────────────
 const FIELDS = [
-  { key: 'Codigo_Barras', label: 'Código de Barras', type: 'text',   required: true,  lockOnEdit: true, hasScanner: true },
-  { key: 'Producto',      label: 'Nombre Producto',  type: 'text',   required: true },
-  { key: 'Categoria',     label: 'Categoría',        type: 'text',   required: true },
-  { key: 'Stock_Actual',  label: 'Stock Actual',     type: 'number', required: true },
-  { key: 'Stock_Minimo',  label: 'Stock Mínimo',     type: 'number', required: true },
-  { key: 'Precio_Venta',  label: 'Precio de Venta',  type: 'number', required: true },
-  { key: 'Imagen',        label: 'URL de Imagen',    type: 'url',    required: false },
+  // Identificadores
+  { key: 'Bar_code',                label: 'Código de Barras',     type: 'text',   required: true,  lockOnEdit: true, hasScanner: true },
+  { key: 'Codigo',                  label: 'Código Interno',       type: 'text',   required: false },
+  { key: 'Clave',                   label: 'Clave',                type: 'text',   required: false },
+  // Información
+  { key: 'Descripcion',             label: 'Descripción',          type: 'text',   required: true },
+  { key: 'Marca',                   label: 'Marca',                type: 'text',   required: false },
+  { key: 'Unidad',                  label: 'Unidad de Medida',     type: 'text',   required: false },
+  { key: 'Codigo_SAT',              label: 'Código SAT',           type: 'text',   required: false },
+  // Stock
+  { key: 'Stock_Actual',            label: 'Stock Actual (Total)', type: 'number', required: true  },
+  { key: 'Almacen_1',               label: 'Almacén 1',            type: 'number', required: false },
+  { key: 'Almacen_2',               label: 'Almacén 2',            type: 'number', required: false },
+  { key: 'Stock_Minimo',            label: 'Stock Mínimo',         type: 'number', required: true  },
+  // Precios
+  { key: 'Precio_publico_IVA',      label: 'Precio Público (IVA)',       type: 'number', required: true  },
+  { key: 'Precio_medio_mayoreo_IVA',label: 'Precio Medio Mayoreo (IVA)', type: 'number', required: false },
+  { key: 'Precio_mayoreo_IVA',      label: 'Precio Mayoreo (IVA)',       type: 'number', required: false },
+  { key: 'Precio_distribuidor_IVA', label: 'Precio Distribuidor (IVA)',  type: 'number', required: false },
+  // Imagen
+  { key: 'Imagen',                  label: 'URL de Imagen',        type: 'url',    required: false },
 ];
 
 const EMPTY = {
-  Codigo_Barras: '', Producto: '', Categoria: '',
-  Stock_Actual: '', Stock_Minimo: '', Precio_Venta: '', Imagen: '',
+  Bar_code: '', Codigo: '', Clave: '', Descripcion: '', Marca: '', Unidad: '', Codigo_SAT: '',
+  Stock_Actual: '', Almacen_1: '', Almacen_2: '', Stock_Minimo: '',
+  Precio_publico_IVA: '', Precio_medio_mayoreo_IVA: '', Precio_mayoreo_IVA: '', Precio_distribuidor_IVA: '',
+  Imagen: '',
 };
 
 // ── Modo Restock ──────────────────────────────────────────────────────────────
@@ -34,7 +51,6 @@ function RestockForm({ product, onSave, onCancel, loading }) {
     <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
 
-        {/* Header */}
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <h2 className="font-bold text-gray-900">Restock de Producto</h2>
           <button onClick={onCancel} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
@@ -44,20 +60,22 @@ function RestockForm({ product, onSave, onCancel, loading }) {
 
         <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
 
-          {/* Info del producto */}
           <div className="bg-orange-50 rounded-xl px-4 py-3 space-y-0.5">
-            <p className="font-semibold text-gray-900 text-sm">{product.Producto}</p>
-            <p className="text-xs text-gray-500 font-mono">{product.Codigo_Barras}</p>
+            <p className="font-semibold text-gray-900 text-sm">{product.Descripcion}</p>
+            <p className="text-xs text-gray-500 font-mono">{product.Bar_code}</p>
+            {product.Marca && <p className="text-xs text-gray-400">{product.Marca}</p>}
             <p className="text-xs text-orange-600 font-medium mt-1">
               Stock actual: {current} unidades
+              {(Number(product.Almacen_1) > 0 || Number(product.Almacen_2) > 0) && (
+                <span className="ml-2 text-gray-400">
+                  (A1: {Number(product.Almacen_1)} | A2: {Number(product.Almacen_2)})
+                </span>
+              )}
             </p>
           </div>
 
-          {/* Cantidad a agregar */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Cantidad a agregar
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Cantidad a agregar</label>
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -87,7 +105,6 @@ function RestockForm({ product, onSave, onCancel, loading }) {
             </div>
           </div>
 
-          {/* Preview stock resultante */}
           <div className="flex justify-between items-center bg-green-50 rounded-xl px-4 py-3">
             <span className="text-sm text-gray-600">Stock resultante</span>
             <span className="text-xl font-bold text-green-700">
@@ -95,7 +112,6 @@ function RestockForm({ product, onSave, onCancel, loading }) {
             </span>
           </div>
 
-          {/* Acciones */}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onCancel} disabled={loading} className="flex-1 btn-secondary">
               Cancelar
@@ -119,11 +135,10 @@ function RestockForm({ product, onSave, onCancel, loading }) {
 
 // ── Modo Nuevo / Editar ───────────────────────────────────────────────────────
 export default function ProductForm({ product, mode = 'new', onSave, onCancel, loading }) {
-  const [form, setForm]         = useState(EMPTY);
-  const [scanBarcode, setScan]  = useState(false);
-  const isEditing               = mode === 'edit';
+  const [form, setForm]        = useState(EMPTY);
+  const [scanBarcode, setScan] = useState(false);
+  const isEditing              = mode === 'edit';
 
-  // Modo restock → delegar al componente dedicado
   if (mode === 'restock' && product) {
     return <RestockForm product={product} onSave={onSave} onCancel={onCancel} loading={loading} />;
   }
@@ -133,15 +148,20 @@ export default function ProductForm({ product, mode = 'new', onSave, onCancel, l
     setForm(product ? { ...EMPTY, ...product } : EMPTY);
   }, [product]);
 
-  const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
+  const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onSave({
       ...form,
-      Stock_Actual: Number(form.Stock_Actual),
-      Stock_Minimo: Number(form.Stock_Minimo),
-      Precio_Venta: Number(form.Precio_Venta),
+      Stock_Actual:             Number(form.Stock_Actual),
+      Almacen_1:                Number(form.Almacen_1) || 0,
+      Almacen_2:                Number(form.Almacen_2) || 0,
+      Stock_Minimo:             Number(form.Stock_Minimo),
+      Precio_publico_IVA:       Number(form.Precio_publico_IVA)       || 0,
+      Precio_medio_mayoreo_IVA: Number(form.Precio_medio_mayoreo_IVA) || 0,
+      Precio_mayoreo_IVA:       Number(form.Precio_mayoreo_IVA)       || 0,
+      Precio_distribuidor_IVA:  Number(form.Precio_distribuidor_IVA)  || 0,
     }, mode);
   };
 
@@ -169,7 +189,7 @@ export default function ProductForm({ product, mode = 'new', onSave, onCancel, l
                   <div className="flex gap-2">
                     <input
                       type={type}
-                      value={form[key]}
+                      value={form[key] ?? ''}
                       onChange={(e) => set(key, e.target.value)}
                       required={required}
                       disabled={isEditing && lockOnEdit}
@@ -177,7 +197,6 @@ export default function ProductForm({ product, mode = 'new', onSave, onCancel, l
                       min={type === 'number' ? 0 : undefined}
                       className="input-base disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
                     />
-                    {/* Botón escáner solo en campo Codigo_Barras de nuevo producto */}
                     {hasScanner && !isEditing && (
                       <button
                         type="button"
@@ -213,14 +232,10 @@ export default function ProductForm({ product, mode = 'new', onSave, onCancel, l
         </div>
       </div>
 
-      {/* Escáner para llenar el código de barras */}
       {scanBarcode && (
         <div className="z-[60] relative">
           <BarcodeScanner
-            onScan={(barcode) => {
-              set('Codigo_Barras', barcode);
-              setScan(false);
-            }}
+            onScan={(barcode) => { set('Bar_code', barcode); setScan(false); }}
             onClose={() => setScan(false)}
             cartCount={0}
             cartTotal={0}
