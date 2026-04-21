@@ -29,8 +29,8 @@ async function request({ method = 'GET', params = {}, body } = {}) {
 }
 
 export const api = {
-  getInventory: () =>
-    request({ params: { action: 'getInventory' } }),
+  getInventory: ({ offset = 0, limit = 0 } = {}) =>
+    request({ params: { action: 'getInventory', offset, limit } }),
 
   getClients: () =>
     request({ params: { action: 'getClients' } }),

@@ -1,10 +1,14 @@
 import { Wifi, WifiOff, RefreshCw } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import { useApp }  from '../../context/AppContext';
 import { useSync } from '../../hooks/useSync';
 
 export default function Navbar() {
-  const { state } = useApp();
+  const { state }            = useApp();
   const { sync, syncStatus } = useSync();
+  const progress             = state.syncProgress;  // { loaded, total } | null
+  const pct = progress
+    ? Math.round((progress.loaded / Math.max(progress.total, 1)) * 100)
+    : 0;
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
@@ -17,7 +21,13 @@ export default function Navbar() {
           </div>
           <div>
             <p className="font-bold text-gray-900 leading-none text-sm">FerrePOS</p>
-            <p className="text-xs text-gray-400 leading-none mt-0.5">Punto de Venta &amp; Inventario</p>
+            {progress ? (
+              <p className="text-xs text-orange-500 leading-none mt-0.5 font-medium">
+                Sincronizando… {progress.loaded.toLocaleString()}/{progress.total.toLocaleString()}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400 leading-none mt-0.5">Punto de Venta &amp; Inventario</p>
+            )}
           </div>
         </div>
 
@@ -38,8 +48,17 @@ export default function Navbar() {
             <span>{state.isOnline ? 'Online' : 'Offline'}</span>
           </div>
         </div>
-
       </div>
+
+      {/* Barra de progreso de sync (solo visible cuando sincroniza) */}
+      {progress && (
+        <div className="h-0.5 bg-orange-100">
+          <div
+            className="h-full bg-orange-500 transition-all duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
     </header>
   );
 }

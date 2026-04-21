@@ -11,18 +11,20 @@ import { syncInventory, shouldSync } from '../services/sync';
 const AppContext = createContext(null);
 
 const initialState = {
-  isOnline: navigator.onLine,
-  syncStatus: 'idle', // 'idle' | 'syncing' | 'success' | 'error'
-  lastSync: null,
+  isOnline:     navigator.onLine,
+  syncStatus:   'idle',   // 'idle' | 'syncing' | 'success' | 'error'
+  syncProgress: null,     // { loaded: number, total: number } | null
+  lastSync:     null,
   notification: null,
 };
 
 function reducer(state, action) {
   switch (action.type) {
     case 'SET_ONLINE':       return { ...state, isOnline: action.payload };
-    case 'SET_SYNC_STATUS':  return { ...state, syncStatus: action.payload };
-    case 'SET_LAST_SYNC':    return { ...state, lastSync: action.payload };
-    case 'SET_NOTIFICATION': return { ...state, notification: action.payload };
+    case 'SET_SYNC_STATUS':   return { ...state, syncStatus:   action.payload };
+    case 'SET_SYNC_PROGRESS': return { ...state, syncProgress: action.payload };
+    case 'SET_LAST_SYNC':     return { ...state, lastSync:     action.payload };
+    case 'SET_NOTIFICATION':  return { ...state, notification: action.payload };
     default:                 return state;
   }
 }
@@ -63,12 +65,16 @@ export function AppProvider({ children }) {
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' });
 
       try {
-        const result = await syncInventory();
-        dispatch({ type: 'SET_SYNC_STATUS', payload: 'success' });
-        dispatch({ type: 'SET_LAST_SYNC', payload: result.timestamp });
+        const result = await syncInventory((loaded, total) => {
+          dispatch({ type: 'SET_SYNC_PROGRESS', payload: { loaded, total } });
+        });
+        dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
+        dispatch({ type: 'SET_SYNC_STATUS',   payload: 'success' });
+        dispatch({ type: 'SET_LAST_SYNC',     payload: result.timestamp });
         return result;
       } catch (err) {
-        dispatch({ type: 'SET_SYNC_STATUS', payload: 'error' });
+        dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
+        dispatch({ type: 'SET_SYNC_STATUS',   payload: 'error' });
         notify('Error al sincronizar inventario', 'error');
         return null;
       } finally {

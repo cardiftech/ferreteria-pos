@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Search, ChevronDown, ScanLine } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Plus, RefreshCw, Search, ScanLine } from 'lucide-react';
+import { useDebounce } from '../hooks/useDebounce';
 import { useInventory }          from '../hooks/useInventory';
 import { useSearch }             from '../hooks/useSearch';
 import { useApp }                from '../context/AppContext';
@@ -9,7 +10,7 @@ import ProductTable              from '../components/inventory/ProductTable';
 import ProductForm               from '../components/inventory/ProductForm';
 import BarcodeScanner            from '../components/pos/BarcodeScanner';
 
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 50; // más grande → menos carga de IntersectionObserver
 
 export default function Inventory() {
   const [query, setQuery]       = useState('');
@@ -19,16 +20,32 @@ export default function Inventory() {
   const [saving, setSaving]     = useState(false);
   const [visible, setVisible]   = useState(PAGE_SIZE);
   const [scanInventory, setScanInventory] = useState(false);
+  const sentinelRef = useRef(null); // elemento centinela para IntersectionObserver
 
   const { products, loading, reload } = useInventory();
   const { notify, state, sync }       = useApp();
-  const results = useSearch(products, query);
+
+  // Debounce: no ejecuta Fuse en cada tecla → espera 200 ms sin escribir
+  const debouncedQuery = useDebounce(query, 200);
+  const results = useSearch(products, debouncedQuery);
 
   // Reiniciar paginación al cambiar búsqueda
-  useEffect(() => setVisible(PAGE_SIZE), [query]);
+  useEffect(() => setVisible(PAGE_SIZE), [debouncedQuery]);
 
-  const shown        = results.slice(0, visible);
-  const hasMore      = results.length > visible;
+  const shown   = results.slice(0, visible);
+  const hasMore = results.length > visible;
+
+  // Infinite scroll: cuando el centinela es visible, carga más filas
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting && hasMore) setVisible(n => n + PAGE_SIZE); },
+      { threshold: 0.1 }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore]);
   const lowStockCount = products.filter(
     (p) => Number(p.Stock_Actual) <= Number(p.Stock_Minimo)
   ).length;
@@ -161,20 +178,14 @@ export default function Inventory() {
         <>
           <ProductTable products={shown} onEdit={openEdit} />
 
-          {/* Cargar más */}
+          {/* Centinela para infinite scroll — invisible, detectado por IntersectionObserver */}
           {hasMore && (
-            <button
-              onClick={() => setVisible((n) => n + PAGE_SIZE)}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-white
-                         border border-gray-200 rounded-xl text-sm font-medium text-gray-600
-                         hover:bg-gray-50 transition-colors shadow-sm"
-            >
-              <ChevronDown size={16} />
-              Cargar más ({results.length - visible} restantes)
-            </button>
+            <div ref={sentinelRef} className="flex justify-center py-4">
+              <div className="w-5 h-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+            </div>
           )}
 
-          <p className="text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-400 pb-2">
             Mostrando {shown.length} de {results.length} productos
           </p>
         </>

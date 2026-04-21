@@ -38,9 +38,13 @@ var CLIENT_COLS = ['ID_Cliente','Nombre','Telefono','Tipo_Precio'];
 
 // ── GET ───────────────────────────────────────────────────────────────────────
 function doGet(e) {
-  var action = (e.parameter && e.parameter.action) || 'getInventory';
+  var p      = e.parameter || {};
+  var action = p.action || 'getInventory';
+  var offset = parseInt(p.offset || '0')  || 0;
+  var limit  = parseInt(p.limit  || '0')  || 0; // 0 = sin límite (devuelve todo)
+
   try {
-    if (action === 'getInventory')   return jsonOk(getInventory_());
+    if (action === 'getInventory')   return jsonOk(getInventory_(offset, limit));
     if (action === 'getClients')     return jsonOk(getClients_());
     if (action === 'getSalesReport') return jsonOk(getSalesReport_());
     if (action === 'ping')           return jsonOk({ status: 'ok', ts: new Date().toISOString() });
@@ -75,19 +79,40 @@ function doPost(e) {
 
 // ── HANDLERS ─────────────────────────────────────────────────────────────────
 
-function getInventory_() {
+/**
+ * Devuelve el inventario completo o paginado.
+ * offset  = fila inicial (0-based, sin contar cabecera)
+ * limit   = cuántas filas devolver (0 = todo)
+ *
+ * Respuesta: { data, total, hasMore, timestamp }
+ * Esto permite al cliente descargar 2000 productos, mostrarlos de inmediato
+ * y pedir los siguientes lotes en segundo plano.
+ */
+function getInventory_(offset, limit) {
   var sheet  = getSheet_(TAB_INVENTORY);
   var values = sheet.getDataRange().getValues();
-  if (values.length < 2) return { data: [], timestamp: now_(), count: 0 };
+  if (values.length < 2) return { data: [], total: 0, hasMore: false, timestamp: now_() };
 
-  var headers = values[0];
-  var data    = values.slice(1).map(function(row) {
+  var headers  = values[0];
+  var allRows  = values.slice(1);
+  var total    = allRows.length;
+
+  var start   = (offset && offset > 0) ? offset : 0;
+  var end     = (limit  && limit  > 0) ? Math.min(start + limit, total) : total;
+  var pageRows = allRows.slice(start, end);
+
+  var data = pageRows.map(function(row) {
     var obj = {};
     headers.forEach(function(h, i) { obj[String(h)] = row[i]; });
     return obj;
   });
 
-  return { data: data, timestamp: now_(), count: data.length };
+  return {
+    data:     data,
+    total:    total,
+    hasMore:  end < total,
+    timestamp: now_(),
+  };
 }
 
 function getClients_() {

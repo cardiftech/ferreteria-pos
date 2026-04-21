@@ -6,6 +6,7 @@ import {
 import { useInventory }  from '../hooks/useInventory';
 import { useSearch }     from '../hooks/useSearch';
 import { useClients }    from '../hooks/useClients';
+import { useDebounce }   from '../hooks/useDebounce';
 import {
   useCart, PRICE_LEVELS, DEFAULT_PRICE_LEVEL,
   resolvePrice, autoWarehouse,
@@ -140,7 +141,9 @@ export default function POS() {
   const { products, reload }             = useInventory();
   const { clients }                      = useClients();
   const { notify, state, sync }          = useApp();
-  const results                          = useSearch(products, query);
+  // Debounce 200ms → Fuse no corre en cada tecla
+  const debouncedQuery                   = useDebounce(query, 200);
+  const results                          = useSearch(products, debouncedQuery);
   const {
     cart, total, addItem, removeItem, updateQuantity, clearCart,
     changePriceLevel, setItemWarehouse,

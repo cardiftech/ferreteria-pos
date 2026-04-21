@@ -44,18 +44,44 @@ function normalizeClient(c) {
   };
 }
 
-export async function syncInventory() {
-  const { data, timestamp, count } = await api.getInventory();
-  if (!Array.isArray(data)) throw new Error('Formato de inventario inválido');
+const BATCH_SIZE = 2000; // productos por petición al servidor
 
-  const clean = data.map(normalizeProduct);
-  await db.transaction('rw', db.inventory, db.syncMeta, async () => {
-    await db.inventory.clear();
+/**
+ * Sincroniza el inventario completo en lotes de BATCH_SIZE.
+ * onProgress(loaded, total) se llama tras cada lote para mostrar avance.
+ * El primer lote se almacena de inmediato → el usuario puede buscar
+ * mientras los demás lotes se descargan en segundo plano.
+ */
+export async function syncInventory(onProgress) {
+  let offset  = 0;
+  let total   = null;
+  let hasMore = true;
+  let firstBatch = true;
+
+  while (hasMore) {
+    const result = await api.getInventory({ offset, limit: BATCH_SIZE });
+
+    if (!Array.isArray(result.data)) throw new Error('Formato de inventario inválido');
+
+    // En el primer lote limpiamos la tabla; lotes siguientes solo agregan
+    if (firstBatch) {
+      await db.inventory.clear();
+      firstBatch = false;
+    }
+
+    const clean = result.data.map(normalizeProduct);
     await db.inventory.bulkPut(clean);
-    await db.syncMeta.put({ key: SYNC_KEY, value: timestamp });
-  });
 
-  return { timestamp, count };
+    offset  += result.data.length;
+    total    = result.total ?? total ?? offset;
+    hasMore  = result.hasMore === true && result.data.length === BATCH_SIZE;
+
+    onProgress?.(offset, total);
+  }
+
+  const ts = new Date().toISOString();
+  await db.syncMeta.put({ key: SYNC_KEY, value: ts });
+  return { timestamp: ts, count: offset };
 }
 
 export async function syncClients() {
