@@ -15,8 +15,12 @@ export default function PaymentModal({ total, defaultMethod = 'Efectivo', defaul
   const [loading, setLoading]       = useState(false);
 
   const cashNum  = parseFloat(cash) || 0;
-  const change   = method === 'Efectivo' && cashNum > 0 ? Math.max(0, cashNum - total) : null;
-  const canPay   = method !== 'Efectivo' || cashNum === 0 || cashNum >= total;
+  // change puede ser negativo (faltan $X) — lo usamos para el feedback visual.
+  // null = no se muestra nada (campo vacío o método distinto a Efectivo).
+  const change   = method === 'Efectivo' && cashNum > 0 ? cashNum - total : null;
+  // Efectivo: si el campo está vacío se permite (sin cálculo de cambio);
+  // si tiene valor debe cubrir el total. Evita confirmar con $0 explícito.
+  const canPay   = method !== 'Efectivo' || cash.trim() === '' || cashNum >= total;
 
   const handleConfirm = async () => {
     if (!canPay) return;
@@ -46,7 +50,7 @@ export default function PaymentModal({ total, defaultMethod = 'Efectivo', defaul
           <div className="flex justify-between items-center bg-blue-50 rounded-xl px-4 py-3">
             <span className="text-gray-600 font-medium text-sm">Total a cobrar</span>
             <span className="text-2xl font-bold text-blue-700">
-              ${total.toLocaleString('es-CO')}
+              ${total.toLocaleString('es-MX')}
             </span>
           </div>
 
@@ -83,15 +87,15 @@ export default function PaymentModal({ total, defaultMethod = 'Efectivo', defaul
                 min={0}
                 value={cash}
                 onChange={(e) => setCash(e.target.value)}
-                placeholder={`Mínimo $${total.toLocaleString('es-CO')}`}
+                placeholder={`Mínimo $${total.toLocaleString('es-MX')}`}
                 className="input-base"
                 autoFocus
               />
               {change !== null && (
                 <p className={`mt-1.5 text-sm font-semibold ${change >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                   {change >= 0
-                    ? `Cambio: $${change.toLocaleString('es-CO')}`
-                    : `Faltan $${(total - cashNum).toLocaleString('es-CO')}`}
+                    ? `Cambio: $${change.toLocaleString('es-MX')}`
+                    : `Faltan $${(total - cashNum).toLocaleString('es-MX')}`}
                 </p>
               )}
             </div>

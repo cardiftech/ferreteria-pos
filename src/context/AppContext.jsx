@@ -6,7 +6,9 @@ import {
   useRef,
   useCallback,
 } from 'react';
-import { syncInventory, shouldSync } from '../services/sync';
+import { syncInventory, shouldSync, getLastSyncTime } from '../services/sync';
+
+const VISIBILITY_SYNC_MS = 30 * 60 * 1000; // re-sync si vuelven tras 30+ min ausente
 
 const AppContext = createContext(null);
 
@@ -50,9 +52,13 @@ export function AppProvider({ children }) {
   const notify = useCallback((message, type = 'info') => {
     if (notifyTimer.current) clearTimeout(notifyTimer.current);
     dispatch({ type: 'SET_NOTIFICATION', payload: { message, type } });
+    // Duración dinámica: mínimo 3 s, ~60 ms por carácter, máximo 8 s.
+    // Evita que mensajes largos (p.ej. "37 omitidos (sin código de barras)")
+    // desaparezcan antes de que el usuario pueda leerlos.
+    const duration = Math.min(Math.max(3_000, message.length * 60), 8_000);
     notifyTimer.current = setTimeout(
       () => dispatch({ type: 'SET_NOTIFICATION', payload: null }),
-      4000
+      duration
     );
   }, []);
 
@@ -62,7 +68,9 @@ export function AppProvider({ children }) {
       if (!force && !(await shouldSync())) return null;
 
       isSyncing.current = true;
-      dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' });
+      dispatch({ type: 'SET_SYNC_STATUS',   payload: 'syncing' });
+      // Muestra el contador inmediatamente, antes de que llegue el primer batch
+      dispatch({ type: 'SET_SYNC_PROGRESS', payload: { loaded: 0, total: null } });
 
       try {
         const result = await syncInventory((loaded, total) => {
@@ -71,11 +79,14 @@ export function AppProvider({ children }) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'success' });
         dispatch({ type: 'SET_LAST_SYNC',     payload: result.timestamp });
+        // Notifica a useInventory que hay datos nuevos (cubre casos donde liveQuery no dispara)
+        window.dispatchEvent(new CustomEvent('ferrepos:synced'));
         return result;
       } catch (err) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'error' });
-        notify('Error al sincronizar inventario', 'error');
+        console.error('[Sync] Error:', err);
+        notify('Error sync: ' + (err?.message || 'desconocido'), 'error');
         return null;
       } finally {
         isSyncing.current = false;
@@ -93,6 +104,20 @@ export function AppProvider({ children }) {
     prevOnline.current = state.isOnline;
     if (state.isOnline && wasOffline) sync(true);
   }, [state.isOnline, sync]);
+
+  // Sync al volver a la PWA (pestaña/app vuelve a ser visible)
+  // Solo si pasaron más de 30 min desde la última sync
+  useEffect(() => {
+    const onVisible = async () => {
+      if (document.hidden) return;
+      if (!navigator.onLine) return;
+      const last = await getLastSyncTime();
+      if (!last) { sync(); return; }
+      if (Date.now() - new Date(last).getTime() > VISIBILITY_SYNC_MS) sync();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [sync]);
 
   return (
     <AppContext.Provider value={{ state, dispatch, notify, sync }}>

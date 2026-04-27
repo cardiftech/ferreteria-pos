@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { X, CheckCircle2, AlertCircle, ShoppingCart, ScanLine, Minus, Plus, Trash2 } from 'lucide-react';
+import { round2 } from '../../hooks/useCart';
 
 const FORMATS = [
   Html5QrcodeSupportedFormats.EAN_13,
@@ -20,12 +21,15 @@ export default function BarcodeScanner({
   cartCount = 0, cartTotal = 0, onCheckout,
   cartItems = [], onRemoveItem, onUpdateQuantity, onSetWarehouse,
   priceLevel,
+  mode = 'pos',   // 'pos' | 'inventory' — en modo inventario se ocultan los controles del carrito
 }) {
-  const scannerRef  = useRef(null);
-  const lastScanned = useRef({});
-  const viewRef     = useRef('scan');         // track view without re-render lag
+  const scannerRef    = useRef(null);
+  const lastScanned   = useRef({});
+  const viewRef       = useRef('scan');         // track view without re-render lag
+  const lastScanTime  = useRef(Date.now());     // para detectar escáner inactivo
   const [view, setView]         = useState('scan');    // 'scan' | 'cart'
   const [feedback, setFeedback] = useState(null);
+  const [scanIdle, setScanIdle] = useState(false);   // sin actividad 5+ seg
 
   const showFeedback = useCallback((text, ok) => {
     setFeedback({ text, ok });
@@ -38,8 +42,19 @@ export default function BarcodeScanner({
     const last = lastScanned.current[decoded] || 0;
     if (now - last < COOLDOWN_MS) return;
     lastScanned.current[decoded] = now;
+    lastScanTime.current = now;               // reinicia el contador de inactividad
+    setScanIdle(false);
     onScan(decoded, showFeedback);
   }, [onScan, showFeedback]);
+
+  // Ref que siempre apunta al handleDecode más reciente.
+  // El escáner Html5Qrcode se inicia una sola vez (sin re-inicializar la cámara
+  // en cada render), por lo que el callback que recibe quedaría "congelado" con el
+  // inventario del primer render. Este patrón — igual al de physicalScan.current
+  // en POS — garantiza que el escáner de cámara siempre use el inventario actual,
+  // incluso después de una sincronización con nuevos productos.
+  const handleDecodeRef = useRef(handleDecode);
+  useEffect(() => { handleDecodeRef.current = handleDecode; }, [handleDecode]);
 
   useEffect(() => {
     const scanner = new Html5Qrcode(SCANNER_DIV_ID);
@@ -49,7 +64,7 @@ export default function BarcodeScanner({
       .start(
         { facingMode: 'environment' },
         { fps: 15, qrbox: { width: 260, height: 110 }, formatsToSupport: FORMATS, aspectRatio: 1.5 },
-        handleDecode,
+        (decoded) => handleDecodeRef.current(decoded),  // wrapper estable → siempre llama al más reciente
         undefined
       )
       .catch((err) => { console.error('Cámara no disponible:', err); onClose(); });
@@ -60,6 +75,15 @@ export default function BarcodeScanner({
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detecta escáner sin actividad por 5+ segundos → muestra pista
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (viewRef.current !== 'scan') return;
+      if (Date.now() - lastScanTime.current > 5000) setScanIdle(true);
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
 
   const switchView = (v) => {
     viewRef.current = v;
@@ -102,7 +126,6 @@ export default function BarcodeScanner({
             ) : (
               <div className="divide-y divide-gray-50">
                 {cartItems.map((item) => {
-                  const price = Number(item.Precio_Venta);
                   return (
                     <div key={item.Bar_code} className="flex items-start gap-3 px-4 py-3">
                       {/* Inicial */}
@@ -118,15 +141,26 @@ export default function BarcodeScanner({
                         <p className="text-xs text-gray-400">${item.activePrice.toLocaleString('es-MX')} c/u</p>
                         {onSetWarehouse && (
                           <div className="flex gap-1 mt-1">
-                            {['Almacen_1', 'Almacen_2'].map(wh => (
-                              <button key={wh}
-                                onClick={() => onSetWarehouse(item.Bar_code, wh)}
-                                className={`px-1.5 py-0.5 text-xs rounded font-medium transition-colors
-                                  ${item.warehouse === wh ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}
-                              >
-                                {wh === 'Almacen_1' ? 'A1' : 'A2'}
-                              </button>
-                            ))}
+                            {['Local', 'Bodeguita'].map(wh => {
+                              const whStock  = Number(wh === 'Bodeguita' ? item.Bodeguita : item.Local);
+                              const isActive = item.warehouse === wh;
+                              const canUse   = isActive || whStock > 0;
+                              return (
+                                <button key={wh}
+                                  onClick={() => canUse && onSetWarehouse(item.Bar_code, wh)}
+                                  disabled={!canUse}
+                                  title={`${wh}: ${whStock} uds`}
+                                  className={`px-1.5 py-0.5 text-xs rounded font-medium transition-colors
+                                    ${isActive
+                                      ? 'bg-orange-500 text-white'
+                                      : canUse
+                                        ? 'bg-gray-100 text-gray-500'
+                                        : 'bg-gray-50 text-gray-200 cursor-not-allowed line-through'}`}
+                                >
+                                  {wh} {whStock}
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -142,7 +176,7 @@ export default function BarcodeScanner({
                         <span className="w-5 text-center text-sm font-bold">{item.quantity}</span>
                         <button
                           onClick={() => onUpdateQuantity?.(item.Bar_code, item.quantity + 1)}
-                          disabled={item.quantity >= Number(item.Stock_Actual)}
+                          disabled={item.quantity >= Number(item.warehouse === 'Bodeguita' ? item.Bodeguita : item.Local)}
                           className="w-7 h-7 rounded-full bg-orange-500 hover:bg-orange-600 text-white
                                      flex items-center justify-center disabled:opacity-30"
                         >
@@ -153,7 +187,7 @@ export default function BarcodeScanner({
                       {/* Subtotal + eliminar */}
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-sm font-bold text-gray-900 w-16 text-right">
-                          ${(item.activePrice * item.quantity).toLocaleString('es-MX')}
+                          ${round2(item.activePrice * item.quantity).toLocaleString('es-MX')}
                         </span>
                         <button
                           onClick={() => onRemoveItem?.(item.Bar_code)}
@@ -175,7 +209,7 @@ export default function BarcodeScanner({
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-500">Total</span>
               <span className="text-xl font-bold text-gray-900">
-                ${cartTotal.toLocaleString('es-CO')}
+                ${cartTotal.toLocaleString('es-MX')}
               </span>
             </div>
             <button
@@ -204,22 +238,26 @@ export default function BarcodeScanner({
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <p className="font-semibold text-sm text-gray-800">Escáner continuo</p>
+          <p className="font-semibold text-sm text-gray-800">
+            {mode === 'inventory' ? 'Escanear producto' : 'Escáner continuo'}
+          </p>
           <div className="flex items-center gap-2">
-            {/* Botón carrito con badge */}
-            <button
-              onClick={() => switchView('cart')}
-              className="relative p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Ver y editar carrito"
-            >
-              <ShoppingCart size={18} className="text-gray-600" />
-              {cartCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white
-                                 text-[10px] font-bold rounded-full flex items-center justify-center">
-                  {cartCount > 9 ? '9+' : cartCount}
-                </span>
-              )}
-            </button>
+            {/* Botón carrito — solo en modo POS */}
+            {mode === 'pos' && (
+              <button
+                onClick={() => switchView('cart')}
+                className="relative p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Ver y editar carrito"
+              >
+                <ShoppingCart size={18} className="text-gray-600" />
+                {cartCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white
+                                   text-[10px] font-bold rounded-full flex items-center justify-center">
+                    {cartCount > 9 ? '9+' : cartCount}
+                  </span>
+                )}
+              </button>
+            )}
             <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
               <X size={17} />
             </button>
@@ -239,6 +277,10 @@ export default function BarcodeScanner({
               {feedback.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
               {feedback.text}
             </div>
+          ) : scanIdle ? (
+            <p className="text-xs text-orange-500 font-medium">
+              Sin detección — limpia el lente o acerca más el código
+            </p>
           ) : (
             <p className="text-xs text-gray-400">
               Apunta al código de barras — se agrega automáticamente
@@ -246,41 +288,43 @@ export default function BarcodeScanner({
           )}
         </div>
 
-        {/* Resumen carrito + botón pagar */}
-        <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-2">
-          <button
-            onClick={() => switchView('cart')}
-            className="w-full flex items-center justify-between text-sm px-3 py-2
-                       bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
-          >
-            <div className="flex items-center gap-1.5 text-gray-500">
-              <ShoppingCart size={15} />
-              <span>
-                {cartCount === 0
-                  ? 'Carrito vacío'
-                  : `${cartCount} ${cartCount === 1 ? 'producto' : 'productos'}`}
-              </span>
-            </div>
-            {cartTotal > 0 && (
-              <span className="font-bold text-gray-900">
-                ${cartTotal.toLocaleString('es-CO')}
-              </span>
-            )}
-          </button>
+        {/* Resumen carrito + botón pagar — solo en modo POS */}
+        {mode === 'pos' && (
+          <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-2">
+            <button
+              onClick={() => switchView('cart')}
+              className="w-full flex items-center justify-between text-sm px-3 py-2
+                         bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
+            >
+              <div className="flex items-center gap-1.5 text-gray-500">
+                <ShoppingCart size={15} />
+                <span>
+                  {cartCount === 0
+                    ? 'Carrito vacío'
+                    : `${cartCount} ${cartCount === 1 ? 'producto' : 'productos'}`}
+                </span>
+              </div>
+              {cartTotal > 0 && (
+                <span className="font-bold text-gray-900">
+                  ${cartTotal.toLocaleString('es-MX')}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={onCheckout}
-            disabled={cartCount === 0}
-            className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center
-                        justify-center gap-2 transition-colors
-                        ${cartCount > 0
-                          ? 'bg-green-500 hover:bg-green-600 text-white'
-                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-          >
-            <CheckCircle2 size={17} />
-            {cartCount > 0 ? 'Ir a Pagar' : 'Agrega productos primero'}
-          </button>
-        </div>
+            <button
+              onClick={onCheckout}
+              disabled={cartCount === 0}
+              className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center
+                          justify-center gap-2 transition-colors
+                          ${cartCount > 0
+                            ? 'bg-green-500 hover:bg-green-600 text-white'
+                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+            >
+              <CheckCircle2 size={17} />
+              {cartCount > 0 ? 'Ir a Pagar' : 'Agrega productos primero'}
+            </button>
+          </div>
+        )}
 
       </div>
     </div>

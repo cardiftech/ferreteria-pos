@@ -1,36 +1,58 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, RefreshCw, Search, ScanLine } from 'lucide-react';
-import { useDebounce } from '../hooks/useDebounce';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Plus, RefreshCw, ScanLine, Download, Clock } from 'lucide-react';
 import { useInventory }          from '../hooks/useInventory';
 import { useSearch }             from '../hooks/useSearch';
 import { useApp }                from '../context/AppContext';
 import { api }                   from '../services/api';
-import { updateLocalProduct }    from '../services/sync';
+import { updateLocalProduct, getLastSyncTime } from '../services/sync';
+import db                        from '../services/db';
+import SearchInput               from '../components/shared/SearchInput';
 import ProductTable              from '../components/inventory/ProductTable';
 import ProductForm               from '../components/inventory/ProductForm';
 import BarcodeScanner            from '../components/pos/BarcodeScanner';
 
+/** Convierte una fecha ISO a texto relativo: "hace 5 min", "hace 2 h", etc. */
+function timeAgo(isoString) {
+  if (!isoString) return null;
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1)  return 'hace un momento';
+  if (mins < 60) return `hace ${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)  return `hace ${hrs} h`;
+  return `hace ${Math.floor(hrs / 24)} días`;
+}
+
 const PAGE_SIZE = 50; // más grande → menos carga de IntersectionObserver
 
 export default function Inventory() {
-  const [query, setQuery]       = useState('');
-  const [editProduct, setEdit]  = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editProduct, setEdit]        = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formMode, setFormMode] = useState('new');
   const [saving, setSaving]     = useState(false);
   const [visible, setVisible]   = useState(PAGE_SIZE);
   const [scanInventory, setScanInventory] = useState(false);
+  const [lastSyncLabel, setLastSyncLabel] = useState('');
   const sentinelRef = useRef(null); // elemento centinela para IntersectionObserver
 
   const { products, loading, reload } = useInventory();
   const { notify, state, sync }       = useApp();
 
-  // Debounce: no ejecuta Fuse en cada tecla → espera 200 ms sin escribir
-  const debouncedQuery = useDebounce(query, 200);
-  const results = useSearch(products, debouncedQuery);
+  // Carga el timestamp de la última sync al montar y cuando el estado de sync cambia
+  useEffect(() => {
+    getLastSyncTime().then(ts => setLastSyncLabel(ts ? timeAgo(ts) : ''));
+  }, [state.syncStatus]);
+
+  // searchQuery viene ya debounced (150ms) desde SearchInput
+  // → este componente NO re-renderiza en cada tecla
+  const { results } = useSearch(products, searchQuery);
+
+  // Callback estable para SearchInput
+  const handleSearch = useCallback((val) => setSearchQuery(val), []);
 
   // Reiniciar paginación al cambiar búsqueda
-  useEffect(() => setVisible(PAGE_SIZE), [debouncedQuery]);
+  useEffect(() => setVisible(PAGE_SIZE), [searchQuery]);
 
   const shown   = results.slice(0, visible);
   const hasMore = results.length > visible;
@@ -46,9 +68,14 @@ export default function Inventory() {
     io.observe(el);
     return () => io.disconnect();
   }, [hasMore]);
-  const lowStockCount = products.filter(
-    (p) => Number(p.Stock_Actual) <= Number(p.Stock_Minimo)
-  ).length;
+  // useMemo evita iterar 16k+ objetos en cada re-render (tecla en buscador, scroll, etc.)
+  // Solo se recalcula cuando cambia el array de productos (sync o restock).
+  const lowStockCount = useMemo(
+    () => products.filter(
+      p => Number(p.Stock_Minimo) > 0 && Number(p.Stock_Actual) <= Number(p.Stock_Minimo)
+    ).length,
+    [products]
+  );
 
   const openEdit  = (p) => { setEdit(p); setFormMode('edit'); setShowForm(true); };
   const openNew   = ()  => { setEdit(null); setFormMode('new'); setShowForm(true); };
@@ -82,6 +109,23 @@ export default function Inventory() {
         : await api.updateProduct(data);
       if (result?.error) throw new Error(result.error);
       await updateLocalProduct(data);
+      // Guarda historial de restock en IndexedDB (no sincroniza con servidor)
+      if (mode === 'restock' && editProduct) {
+        const oldStock = Number(editProduct.Stock_Actual);
+        const newStock = Number(data.Stock_Actual);
+        await db.restockHistory.add({
+          Bar_code: data.Bar_code,
+          date:     new Date().toISOString(),
+          delta:    newStock - oldStock,
+          oldStock,
+          newStock,
+        }).catch(() => {}); // no bloquear si falla
+
+        // Limpieza: elimina registros de restock con más de 90 días para no
+        // llenar IndexedDB con historial indefinido en uso intensivo.
+        const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+        db.restockHistory.where('date').below(cutoff).delete().catch(() => {});
+      }
       await reload();
       const msg = isNew ? 'Producto agregado' : mode === 'restock' ? 'Stock actualizado' : 'Producto actualizado';
       notify(msg, 'success');
@@ -94,13 +138,26 @@ export default function Inventory() {
   };
 
   const handleSync = async () => {
-    try {
-      await sync(true);
-      await reload();
-      notify('Inventario sincronizado', 'success');
-    } catch {
-      notify('Error al sincronizar', 'error');
+    const result = await sync(true); // sync() nunca lanza — devuelve null si hubo error
+    await reload();
+    if (result) {
+      // Mensaje base
+      let msg = `Inventario actualizado — ${result.count.toLocaleString('es-MX')} productos`;
+
+      // Si Sheets tenía filas problemáticas, informar claramente
+      const omitidos = (result.skippedEmpty ?? 0) + (result.skippedDupe ?? 0);
+      if (omitidos > 0) {
+        const partes = [];
+        if (result.skippedEmpty > 0)
+          partes.push(`${result.skippedEmpty} sin código de barras`);
+        if (result.skippedDupe > 0)
+          partes.push(`${result.skippedDupe} con código repetido`);
+        msg += ` · ${omitidos} omitidos (${partes.join(', ')})`;
+      }
+
+      notify(msg, omitidos > 0 ? 'warning' : 'success');
     }
+    // Si result === null, AppContext ya mostró el toast de error; no sobreescribimos
   };
 
   return (
@@ -111,7 +168,7 @@ export default function Inventory() {
         <div>
           <h1 className="text-lg font-bold text-gray-900">Inventario</h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            {products.length} productos
+            {products.length.toLocaleString('es-MX')} productos
             {lowStockCount > 0 && (
               <span className="ml-1.5 text-orange-600 font-medium">
                 · {lowStockCount} stock bajo
@@ -120,16 +177,6 @@ export default function Inventory() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={handleSync}
-            disabled={!state.isOnline}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200
-                       rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50
-                       disabled:opacity-40 transition-colors shadow-sm"
-          >
-            <RefreshCw size={14} />
-            <span className="hidden sm:inline">Sincronizar</span>
-          </button>
           <button
             onClick={() => setScanInventory(true)}
             className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200
@@ -150,18 +197,57 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Buscador */}
-      <div className="relative">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filtrar productos…"
-          className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl
-                     text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 shadow-sm"
-        />
+      {/* ── Panel: Importar desde Google Sheets ─────────────────────────────── */}
+      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Download size={18} className="text-blue-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-blue-800 leading-tight">
+                Importar desde Google Sheets
+              </p>
+              <p className="text-xs text-blue-600 mt-0.5 leading-snug">
+                Agrega o edita filas en la hoja <span className="font-semibold">INVENTARIO</span> y
+                pulsa <span className="font-semibold">Actualizar</span> — todos los productos
+                nuevos aparecerán en el POS al instante.
+              </p>
+              {lastSyncLabel ? (
+                <p className="flex items-center gap-1 text-xs text-blue-400 mt-1.5">
+                  <Clock size={11} />
+                  Última actualización {lastSyncLabel}
+                </p>
+              ) : (
+                <p className="text-xs text-blue-400 mt-1.5">Sin sincronización registrada</p>
+              )}
+            </div>
+          </div>
+
+          <button
+            onClick={handleSync}
+            disabled={!state.isOnline || state.syncStatus === 'syncing'}
+            className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5
+                       bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300
+                       text-white rounded-xl text-sm font-semibold
+                       transition-colors shadow-sm"
+          >
+            <RefreshCw
+              size={14}
+              className={state.syncStatus === 'syncing' ? 'animate-spin' : ''}
+            />
+            {state.syncStatus === 'syncing' ? 'Actualizando…' : 'Actualizar'}
+          </button>
+        </div>
       </div>
+
+      {/* Buscador — SearchInput gestiona su propio valor internamente */}
+      <SearchInput
+        onSearch={handleSearch}
+        onClose={() => handleSearch('')}
+        placeholder="Buscar por descripción, código, clave o barcode…"
+        inputClassName="bg-white border border-gray-200 shadow-sm"
+      />
 
       {/* Tabla / estados */}
       {loading ? (
@@ -171,7 +257,9 @@ export default function Inventory() {
       ) : results.length === 0 ? (
         <div className="bg-white rounded-xl p-12 text-center text-gray-400 shadow-sm border border-gray-100">
           <p className="text-sm">
-            {query ? 'Sin resultados para ese filtro' : 'No hay productos — sincroniza o agrega uno nuevo'}
+            {searchQuery
+              ? `Sin resultados para "${searchQuery}"`
+              : 'No hay productos — sincroniza o agrega uno nuevo'}
           </p>
         </div>
       ) : (
@@ -203,11 +291,9 @@ export default function Inventory() {
 
       {scanInventory && (
         <BarcodeScanner
+          mode="inventory"
           onScan={(barcode) => handleInventoryScan(barcode)}
           onClose={() => setScanInventory(false)}
-          cartCount={0}
-          cartTotal={0}
-          onCheckout={() => setScanInventory(false)}
         />
       )}
 

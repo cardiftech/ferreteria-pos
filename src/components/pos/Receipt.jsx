@@ -1,12 +1,14 @@
+import { useRef } from 'react';
 import { CheckCircle2, Printer, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { round2 } from '../../hooks/useCart';
 
-function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, change, customer, timestamp }) {
+function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, change, customer, notas, timestamp }) {
   const dateStr = format(new Date(timestamp), "dd/MM/yyyy HH:mm", { locale: es });
 
   const itemsRows = items.map((item) => {
-    const subtotal  = (item.activePrice * item.quantity).toLocaleString('es-MX');
+    const subtotal  = round2(item.activePrice * item.quantity).toLocaleString('es-MX');
     const unitPrice = item.activePrice.toLocaleString('es-MX');
     return `
       <tr>
@@ -21,15 +23,19 @@ function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, c
   const changeRows = (paymentMethod === 'Efectivo' && cashReceived > 0) ? `
     <tr>
       <td>Recibido</td>
-      <td class="right">$${Number(cashReceived).toLocaleString('es-CO')}</td>
+      <td class="right">$${Number(cashReceived).toLocaleString('es-MX')}</td>
     </tr>
     <tr>
       <td class="bold green">Cambio</td>
-      <td class="right bold green">$${Number(change).toLocaleString('es-CO')}</td>
+      <td class="right bold green">$${Number(change).toLocaleString('es-MX')}</td>
     </tr>` : '';
 
   const customerRow = customer
     ? `<tr><td>Cliente</td><td class="right">${customer}</td></tr>`
+    : '';
+
+  const notasRow = notas
+    ? `<tr><td colspan="2" style="padding-top:4px;font-style:italic;color:#555;font-size:11px">${notas}</td></tr>`
     : '';
 
   return `<!DOCTYPE html>
@@ -120,8 +126,8 @@ function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, c
 <body>
 
   <div class="center">
-    <div class="store-name">FerrePOS</div>
-    <div class="store-sub">Punto de Venta · Ferretería</div>
+    <div class="store-name">El Obraje</div>
+    <div class="store-sub">Ferretería &amp; Materiales</div>
   </div>
 
   <hr>
@@ -136,6 +142,7 @@ function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, c
       <td class="right">${dateStr}</td>
     </tr>
     ${customerRow}
+    ${notasRow}
   </table>
 
   <hr>
@@ -149,7 +156,7 @@ function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, c
   <table>
     <tr class="total-row">
       <td>TOTAL</td>
-      <td class="right">$${Number(total).toLocaleString('es-CO')}</td>
+      <td class="right">$${Number(total).toLocaleString('es-MX')}</td>
     </tr>
     <tr>
       <td class="meta-label">Método de pago</td>
@@ -166,25 +173,45 @@ function buildReceiptHTML({ saleId, items, total, paymentMethod, cashReceived, c
   <script>
     window.onload = function () {
       window.print();
-      setTimeout(function () { window.close(); }, 800);
+    };
+    window.onafterprint = function () {
+      window.close();
     };
   </script>
 </body>
 </html>`;
 }
 
-export default function Receipt({ sale, onClose }) {
+export default function Receipt({ sale, onClose, notify }) {
   const {
     saleId, items, total, paymentMethod,
-    cashReceived, change, customer, timestamp,
+    cashReceived, change, customer, notas, timestamp,
   } = sale;
 
+  // Referencia a la ventana de impresión — si sigue abierta, solo llama print()
+  // en lugar de abrir otra ventana y duplicar los estilos.
+  const receiptWin = useRef(null);
+
   const handlePrint = () => {
+    // Si la ventana ya existe y está abierta, solo la enfoca y manda imprimir
+    if (receiptWin.current && !receiptWin.current.closed) {
+      receiptWin.current.focus();
+      receiptWin.current.print();
+      return;
+    }
     const html = buildReceiptHTML(sale);
     const win  = window.open('', '_blank', 'width=400,height=650,toolbar=0,menubar=0,scrollbars=1');
     if (win) {
+      receiptWin.current = win;
+      win.document.open();   // limpia el documento antes de escribir
       win.document.write(html);
       win.document.close();
+    } else {
+      // El navegador bloqueó el popup (muy común en móviles con Chrome)
+      notify?.(
+        'Popup bloqueado — ve a Configuración › Sitios › Ventanas emergentes y permite esta página',
+        'warning',
+      );
     }
   };
 
@@ -218,6 +245,11 @@ export default function Receipt({ sale, onClose }) {
               <span className="text-gray-700">{customer}</span>
             </div>
           )}
+          {notas && (
+            <div className="text-xs text-gray-400 italic">
+              {notas}
+            </div>
+          )}
 
           <hr className="border-dashed my-2" />
 
@@ -228,7 +260,7 @@ export default function Receipt({ sale, onClose }) {
                   {item.quantity}× {item.Descripcion}
                 </span>
                 <span className="font-medium text-gray-900 flex-shrink-0">
-                  ${(item.activePrice * item.quantity).toLocaleString('es-MX')}
+                  ${round2(item.activePrice * item.quantity).toLocaleString('es-MX')}
                 </span>
               </div>
             ))}
@@ -238,7 +270,7 @@ export default function Receipt({ sale, onClose }) {
 
           <div className="flex justify-between font-bold text-base">
             <span>Total</span>
-            <span className="text-blue-700">${total.toLocaleString('es-CO')}</span>
+            <span className="text-blue-700">${total.toLocaleString('es-MX')}</span>
           </div>
           <div className="flex justify-between text-gray-500">
             <span>Método</span>
@@ -248,11 +280,11 @@ export default function Receipt({ sale, onClose }) {
             <>
               <div className="flex justify-between text-gray-500">
                 <span>Recibido</span>
-                <span>${Number(cashReceived).toLocaleString('es-CO')}</span>
+                <span>${Number(cashReceived).toLocaleString('es-MX')}</span>
               </div>
               <div className="flex justify-between text-green-700 font-semibold">
                 <span>Cambio</span>
-                <span>${Number(change).toLocaleString('es-CO')}</span>
+                <span>${Number(change).toLocaleString('es-MX')}</span>
               </div>
             </>
           )}

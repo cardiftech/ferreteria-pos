@@ -8,8 +8,20 @@ import {
 // ── Config ────────────────────────────────────────────────────────────────────
 const GAS_URL         = import.meta.env.VITE_GAS_URL;
 const ADMIN_PIN       = import.meta.env.VITE_ADMIN_PIN || '1234';
-const TIMEZONE        = 'America/Bogota';
-const AUTO_REFRESH_MS = 5 * 60 * 1000;
+// Zona horaria: variable de entorno > configuración del navegador del dispositivo
+const TIMEZONE        = import.meta.env.VITE_TIMEZONE
+                        || Intl.DateTimeFormat().resolvedOptions().timeZone
+                        || 'America/Mexico_City';
+const AUTO_REFRESH_MS  = 5 * 60 * 1000;
+const PIN_TTL_MS       = 30 * 60 * 1000; // PIN expira a los 30 minutos
+
+// ── Helpers de sesión PIN ─────────────────────────────────────────────────────
+function pinIsValid() {
+  const ts = sessionStorage.getItem('admin_ts');
+  return ts && (Date.now() - parseInt(ts, 10)) < PIN_TTL_MS;
+}
+function pinSave()  { sessionStorage.setItem('admin_ts', String(Date.now())); }
+function pinClear() { sessionStorage.removeItem('admin_ts'); }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function toISOSafe(val) {
@@ -34,19 +46,19 @@ function weekAgoKey() {
 }
 
 function fmtCurrency(n) {
-  return '$' + Number(n || 0).toLocaleString('es-CO');
+  return '$' + Number(n || 0).toLocaleString('es-MX');
 }
 
 function fmtTime(dateStr) {
   if (!dateStr) return '';
-  return new Date(toISOSafe(dateStr)).toLocaleTimeString('es-CO', {
+  return new Date(toISOSafe(dateStr)).toLocaleTimeString('es-MX', {
     hour: '2-digit', minute: '2-digit', timeZone: TIMEZONE,
   });
 }
 
 function fmtDate(dateStr) {
   if (!dateStr) return '';
-  return new Date(toISOSafe(dateStr)).toLocaleDateString('es-CO', {
+  return new Date(toISOSafe(dateStr)).toLocaleDateString('es-MX', {
     day: '2-digit', month: 'short', timeZone: TIMEZONE,
   });
 }
@@ -81,14 +93,35 @@ function buildMetrics(sales = [], products = []) {
     payBreakdown[m] = (payBreakdown[m] || 0) + s.Total;
   });
 
+  // Muestra productos que necesitan restock:
+  //   a) Tienen Stock_Minimo configurado (>0) y el stock llegó al mínimo o por debajo
+  //   b) Están completamente agotados (Stock_Actual = 0) y tienen precio > 0
+  //      (precio > 0 filtra filas vacías / productos descontinuados sin precio)
   const lowStock = products
-    .filter(p => Number(p.Stock_Actual) <= Number(p.Stock_Minimo))
+    .filter(p => {
+      const stock = Number(p.Stock_Actual);
+      const min   = Number(p.Stock_Minimo);
+      const price = Number(p.Precio_publico_IVA);
+      if (!p.Descripcion || !p.Bar_code) return false;
+      if (min > 0 && stock <= min) return true;          // bajo mínimo configurado
+      if (stock === 0 && price > 0)  return true;        // agotado con precio activo
+      return false;
+    })
     .map(p => ({
       ...p,
       Stock_Actual: Number(p.Stock_Actual),
       Stock_Minimo: Number(p.Stock_Minimo),
+      _price:       Number(p.Precio_publico_IVA),
     }))
-    .sort((a, b) => a.Stock_Actual - b.Stock_Actual);
+    .sort((a, b) => {
+      // Primero: los que tienen mínimo configurado y están por debajo
+      const aConf = a.Stock_Minimo > 0 ? 1 : 0;
+      const bConf = b.Stock_Minimo > 0 ? 1 : 0;
+      if (aConf !== bConf) return bConf - aConf;
+      // Luego: por precio descendente (más valiosos primero)
+      return b._price - a._price;
+    })
+    .slice(0, 100);
 
   const topMap = {};
   salesToday.forEach(s => {
@@ -131,7 +164,7 @@ function PinGate({ onUnlock }) {
     setDigits(next);
     if (next.length === 4) {
       if (next === ADMIN_PIN) {
-        sessionStorage.setItem('admin_ok', '1');
+        pinSave();
         onUnlock();
       } else {
         setShake(true);
@@ -235,7 +268,7 @@ function SectionTitle({ children }) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [authed,   setAuthed]   = useState(() => sessionStorage.getItem('admin_ok') === '1');
+  const [authed,   setAuthed]   = useState(() => pinIsValid());
   const [metrics,  setMetrics]  = useState(null);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState(null);
@@ -258,13 +291,20 @@ export default function Dashboard() {
   useEffect(() => {
     if (!authed) return;
     load();
-    const id = setInterval(load, AUTO_REFRESH_MS);
+    // Auto-refresh y verificación de expiración de PIN cada AUTO_REFRESH_MS.
+    // Se pausa si la pestaña no está visible (Page Visibility API) para no
+    // consumir cuota de Google Sheets innecesariamente.
+    const id = setInterval(() => {
+      if (document.hidden) return;          // pestaña en segundo plano → saltar
+      if (!pinIsValid()) { pinClear(); setAuthed(false); return; }
+      load();
+    }, AUTO_REFRESH_MS);
     return () => clearInterval(id);
   }, [authed, load]);
 
   if (!authed) return <PinGate onUnlock={() => setAuthed(true)} />;
 
-  const todayLabel = new Date().toLocaleDateString('es-CO', {
+  const todayLabel = new Date().toLocaleDateString('es-MX', {
     weekday: 'long', day: 'numeric', month: 'long', timeZone: TIMEZONE,
   });
 
@@ -285,7 +325,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           {lastSync && !loading && (
             <span className="text-slate-500 text-xs hidden sm:block">
-              {lastSync.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+              {lastSync.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
           <button
@@ -297,7 +337,7 @@ export default function Dashboard() {
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </button>
           <button
-            onClick={() => { sessionStorage.removeItem('admin_ok'); setAuthed(false); }}
+            onClick={() => { pinClear(); setAuthed(false); }}
             title="Cerrar sesión"
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 transition-colors"
           >
@@ -315,11 +355,19 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Loading */}
+        {/* Loading — skeleton mientras llega la primera carga */}
         {loading && !metrics && (
-          <div className="flex flex-col items-center justify-center py-24 gap-3">
-            <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-gray-400">Cargando datos…</p>
+          <div className="space-y-5 animate-pulse">
+            <div className="grid grid-cols-2 gap-3">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="bg-white rounded-2xl p-4 h-24 border border-gray-100" />
+              ))}
+            </div>
+            <div className="bg-white rounded-2xl h-32 border border-gray-100" />
+            <div className="bg-white rounded-2xl h-48 border border-gray-100" />
+            <p className="text-center text-xs text-gray-400 pt-2">
+              Cargando datos desde Google Sheets…
+            </p>
           </div>
         )}
 
@@ -355,7 +403,9 @@ export default function Dashboard() {
                   icon={AlertTriangle}
                   label="Bajo stock"
                   value={metrics.lowStock.length}
-                  sub={metrics.lowStock.length > 0 ? 'Necesitan restock' : 'Todo en orden ✓'}
+                  sub={metrics.lowStock.length > 0
+                    ? `${metrics.lowStock.length === 100 ? '100+' : metrics.lowStock.length} necesitan restock`
+                    : 'Todo en orden ✓'}
                   color={metrics.lowStock.length > 0 ? 'red' : 'slate'}
                   alert={metrics.lowStock.length > 0}
                 />
@@ -387,30 +437,36 @@ export default function Dashboard() {
             {/* ── Productos bajo stock ── */}
             {metrics.lowStock.length > 0 && (
               <div>
-                <SectionTitle>⚠️ Productos que necesitan restock ({metrics.lowStock.length})</SectionTitle>
+                <SectionTitle>
+                  ⚠️ Productos que necesitan restock
+                  {metrics.lowStock.length === 100 ? ' (100+ — configura Stock_Mínimo para mayor precisión)' : ` (${metrics.lowStock.length})`}
+                </SectionTitle>
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                   {metrics.lowStock.map((p, i) => {
-                    const outOfStock = p.Stock_Actual <= 0;
+                    const agotado   = p.Stock_Actual <= 0;
+                    const conMinimo = p.Stock_Minimo > 0;
                     return (
                       <div
                         key={p.Bar_code || p.Descripcion}
                         className={`flex items-center px-4 py-3 gap-3
                           ${i < metrics.lowStock.length - 1 ? 'border-b border-gray-50' : ''}
-                          ${outOfStock ? 'bg-red-50' : ''}`}
+                          ${agotado ? 'bg-red-50' : ''}`}
                       >
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
-                          ${outOfStock ? 'bg-red-100' : 'bg-orange-50'}`}>
-                          <Package size={14} className={outOfStock ? 'text-red-500' : 'text-orange-500'} />
+                          ${agotado ? 'bg-red-100' : 'bg-orange-50'}`}>
+                          <Package size={14} className={agotado ? 'text-red-500' : 'text-orange-500'} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{p.Descripcion}</p>
-                          <p className="text-xs text-gray-400">{p.Marca}</p>
+                          <p className="text-xs text-gray-400">{p.PROVEEDOR || p.Bar_code}</p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className={`text-sm font-bold ${outOfStock ? 'text-red-600' : 'text-orange-600'}`}>
-                            {p.Stock_Actual}
+                          <p className={`text-sm font-bold ${agotado ? 'text-red-600' : 'text-orange-600'}`}>
+                            {agotado ? 'Agotado' : p.Stock_Actual}
                           </p>
-                          <p className="text-xs text-gray-400">mín {p.Stock_Minimo}</p>
+                          <p className="text-xs text-gray-400">
+                            {conMinimo ? `mín ${p.Stock_Minimo}` : 'sin mín.'}
+                          </p>
                         </div>
                       </div>
                     );
@@ -508,7 +564,7 @@ export default function Dashboard() {
             </div>
 
             <p className="text-center text-xs text-gray-300 pb-4">
-              Última actualización: {lastSync?.toLocaleTimeString('es-CO')}
+              Última actualización: {lastSync?.toLocaleTimeString('es-MX')}
               {' · '}Auto-refresh cada 5 min
             </p>
           </>

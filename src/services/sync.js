@@ -2,7 +2,7 @@ import db from './db';
 import { api } from './api';
 
 const SYNC_KEY         = 'lastSync';
-const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hora — sincroniza al abrir si pasó más de 1h
 
 export async function getLastSyncTime() {
   const meta = await db.syncMeta.get(SYNC_KEY);
@@ -24,14 +24,18 @@ function parseNum(val) {
 function normalizeProduct(p) {
   return {
     ...p,
+    // Bar_code siempre como string; Dexie necesita PK consistente y no vacía
+    Bar_code:                 String(p.Bar_code ?? '').trim(),
+    // Codigo_SAT como string para evitar problemas al enviarlo al GAS
+    Codigo_SAT:               String(p.Codigo_SAT ?? '').trim(),
     Precio_distribuidor_IVA:  parseNum(p.Precio_distribuidor_IVA),
     Precio_mayoreo_IVA:       parseNum(p.Precio_mayoreo_IVA),
     Precio_medio_mayoreo_IVA: parseNum(p.Precio_medio_mayoreo_IVA),
     Precio_publico_IVA:       parseNum(p.Precio_publico_IVA),
     Stock_Actual:             parseNum(p.Stock_Actual),
     Stock_Minimo:             parseNum(p.Stock_Minimo),
-    Almacen_1:                parseNum(p.Almacen_1),
-    Almacen_2:                parseNum(p.Almacen_2),
+    Local:                    parseNum(p.Local),
+    Bodeguita:                parseNum(p.Bodeguita),
   };
 }
 
@@ -44,33 +48,40 @@ function normalizeClient(c) {
   };
 }
 
-const BATCH_SIZE = 2000; // productos por petición al servidor
+const BATCH_SIZE = 5000; // productos por petición al servidor
 
 /**
  * Sincroniza el inventario completo en lotes de BATCH_SIZE.
  * onProgress(loaded, total) se llama tras cada lote para mostrar avance.
- * El primer lote se almacena de inmediato → el usuario puede buscar
- * mientras los demás lotes se descargan en segundo plano.
+ *
+ * ESTRATEGIA SEGURA: descarga TODOS los lotes a memoria primero y solo
+ * entonces hace clear() + bulkPut() en una transacción atómica.
+ * Si cualquier lote falla (red cortada, error del servidor), el inventario
+ * local queda intacto — nunca se queda vacío a la mitad.
+ *
+ * Devuelve { timestamp, count, skippedEmpty, skippedDupe } para que
+ * la UI pueda informar al usuario cuántas filas de Sheets fueron omitidas
+ * (sin Bar_code o con Bar_code repetido) y por qué el conteo difiere.
  */
 export async function syncInventory(onProgress) {
-  let offset  = 0;
-  let total   = null;
-  let hasMore = true;
-  let firstBatch = true;
+  let offset      = 0;
+  let total       = null;
+  let hasMore     = true;
+  const allProducts  = [];   // buffer en memoria hasta terminar
+  let skippedEmpty   = 0;    // filas sin Bar_code (Dexie no puede guardarlas)
+  let skippedDupe    = 0;    // filas con Bar_code repetido (la última gana)
 
   while (hasMore) {
     const result = await api.getInventory({ offset, limit: BATCH_SIZE });
 
     if (!Array.isArray(result.data)) throw new Error('Formato de inventario inválido');
 
-    // En el primer lote limpiamos la tabla; lotes siguientes solo agregan
-    if (firstBatch) {
-      await db.inventory.clear();
-      firstBatch = false;
-    }
+    const normalized = result.data.map(normalizeProduct);
 
-    const clean = result.data.map(normalizeProduct);
-    await db.inventory.bulkPut(clean);
+    for (const p of normalized) {
+      if (p.Bar_code === '') { skippedEmpty++; continue; }
+      allProducts.push(p);
+    }
 
     offset  += result.data.length;
     total    = result.total ?? total ?? offset;
@@ -79,9 +90,24 @@ export async function syncInventory(onProgress) {
     onProgress?.(offset, total);
   }
 
+  // Deduplicar por Bar_code (última fila en Sheets gana, igual que bulkPut)
+  // Esto hace que allProducts.length coincida exactamente con lo que Dexie guarda.
+  const seen    = new Map();
+  for (const p of allProducts) {
+    if (seen.has(p.Bar_code)) skippedDupe++;
+    seen.set(p.Bar_code, p);
+  }
+  const unique = Array.from(seen.values());
+
+  // Solo cuando TODOS los lotes están en memoria: escribe atómicamente
+  await db.transaction('rw', db.inventory, async () => {
+    await db.inventory.clear();
+    await db.inventory.bulkPut(unique);
+  });
+
   const ts = new Date().toISOString();
   await db.syncMeta.put({ key: SYNC_KEY, value: ts });
-  return { timestamp: ts, count: offset };
+  return { timestamp: ts, count: unique.length, skippedEmpty, skippedDupe };
 }
 
 export async function syncClients() {
@@ -100,6 +126,24 @@ export async function syncClients() {
 
 export async function updateLocalProduct(product) {
   return db.inventory.put(normalizeProduct(product));
+}
+
+/**
+ * Descuenta stock localmente después de una venta, sin hacer sync completo.
+ * items = [{ Bar_code, quantity, warehouse }]
+ */
+export async function decrementLocalStock(items) {
+  for (const item of items) {
+    const p = await db.inventory.get(String(item.Bar_code));
+    if (!p) continue;
+    const qty     = Number(item.quantity) || 0;
+    const whKey   = item.warehouse === 'Bodeguita' ? 'Bodeguita' : 'Local';
+    await db.inventory.put({
+      ...p,
+      Stock_Actual: Math.max(0, (Number(p.Stock_Actual) || 0) - qty),
+      [whKey]:      Math.max(0, (Number(p[whKey])       || 0) - qty),
+    });
+  }
 }
 
 export async function getLocalInventory() {

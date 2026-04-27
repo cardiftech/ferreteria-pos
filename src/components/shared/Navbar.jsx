@@ -1,13 +1,14 @@
-import { Wifi, WifiOff, RefreshCw } from 'lucide-react';
-import { useApp }  from '../../context/AppContext';
-import { useSync } from '../../hooks/useSync';
+import { Wifi, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
+import { usePendingSalesCount } from '../../hooks/usePendingSalesCount';
 
 export default function Navbar() {
-  const { state }            = useApp();
-  const { sync, syncStatus } = useSync();
-  const progress             = state.syncProgress;  // { loaded, total } | null
+  const { state, sync }  = useApp();
+  const pendingCount     = usePendingSalesCount();
+  const syncStatus       = state.syncStatus;
+  const progress         = state.syncProgress;  // { loaded, total | null } | null
   const pct = progress
-    ? Math.round((progress.loaded / Math.max(progress.total, 1)) * 100)
+    ? (progress.total ? Math.round((progress.loaded / progress.total) * 100) : 5)
     : 0;
 
   return (
@@ -20,10 +21,19 @@ export default function Navbar() {
             <span className="text-white text-lg">🔧</span>
           </div>
           <div>
-            <p className="font-bold text-gray-900 leading-none text-sm">FerrePOS</p>
+            <p className="font-bold text-gray-900 leading-none text-sm">El Obraje</p>
             {progress ? (
               <p className="text-xs text-orange-500 leading-none mt-0.5 font-medium">
-                Sincronizando… {progress.loaded.toLocaleString()}/{progress.total.toLocaleString()}
+                {progress.total
+                  ? `Sincronizando… ${progress.loaded.toLocaleString()}/${progress.total.toLocaleString()}`
+                  : 'Conectando con servidor…'}
+              </p>
+            ) : pendingCount > 0 ? (
+              <p className="flex items-center gap-1 text-xs text-red-500 leading-none mt-0.5 font-semibold">
+                <AlertTriangle size={10} />
+                {pendingCount === 1
+                  ? '1 venta sin registrar'
+                  : `${pendingCount} ventas sin registrar`}
               </p>
             ) : (
               <p className="text-xs text-gray-400 leading-none mt-0.5">Punto de Venta &amp; Inventario</p>

@@ -7,6 +7,12 @@ if (!GAS_URL || GAS_URL.includes('TU_SCRIPT_ID')) {
   );
 }
 
+// 45 s: da margen suficiente al cold-start de GAS (~20-25 s el primer request del día)
+const API_TIMEOUT_MS = 45_000;
+// Reintentos para errores de red transitorios (micro-cortes de WiFi/móvil).
+// Los timeouts NO se reintentan — si tardó 45 s una vez, volvería a tardar.
+const MAX_RETRIES    = 2;
+
 async function request({ method = 'GET', params = {}, body } = {}) {
   let url = GAS_URL;
 
@@ -14,18 +20,54 @@ async function request({ method = 'GET', params = {}, body } = {}) {
     url += '?' + new URLSearchParams(params).toString();
   }
 
-  const res = await fetch(url, {
-    method,
-    redirect: 'follow',
-    ...(body !== undefined && { body: JSON.stringify(body) }),
-  });
+  let lastErr;
 
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`Respuesta inválida del servidor: ${text.slice(0, 120)}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Espera progresiva antes de cada reintento: 0 ms → 1 000 ms → 2 000 ms
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, 1_000 * attempt));
+    }
+
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(url, {
+        method,
+        redirect: 'follow',
+        signal:   controller.signal,
+        ...(body !== undefined && { body: JSON.stringify(body) }),
+      });
+
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(`Respuesta inválida del servidor: ${text.slice(0, 120)}`);
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        // Timeout: no tiene sentido reintentar — lanza de inmediato
+        throw new Error('El servidor tardó demasiado (45 s) — verifica tu conexión e intenta de nuevo');
+      }
+
+      // Los POST NO se reintentan: si GAS procesó la escritura pero la respuesta
+      // se perdió, reintentar registraría la misma operación dos veces
+      // (venta duplicada, producto duplicado, etc.).
+      // Solo los GET son idempotentes y pueden reintentarse con seguridad.
+      if (method !== 'GET') throw err;
+
+      lastErr = err;
+      // Sigue al siguiente intento (si queda alguno)
+      continue;
+    } finally {
+      // finally cubre todos los caminos de salida (return, throw, continue)
+      clearTimeout(timeoutId);
+    }
   }
+
+  // Agotados los reintentos — lanza el último error de red
+  throw lastErr;
 }
 
 export const api = {
