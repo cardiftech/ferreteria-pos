@@ -10,7 +10,7 @@
  * INVENTARIO (A→P):
  *   Codigo | Clave | Descripcion | Unidad | Bar_code |
  *   Precio_distribuidor_IVA | Precio_mayoreo_IVA | Precio_medio_mayoreo_IVA | Precio_publico_IVA |
- *   Codigo_SAT | Marca | Stock_Actual | Stock_Minimo | Imagen | Almacen_1 | Almacen_2
+ *   Codigo_SAT | PROVEEDOR | Stock_Actual | Stock_Minimo | Imagen | Local | Bodeguita
  *
  * VENTAS (A→G):
  *   ID_Venta | Fecha | Productos | Total | Metodo_Pago | Cliente | Pagos
@@ -28,10 +28,10 @@ var TAB_CLIENTS   = 'CLIENTES';
 var INV_COLS = [
   'Codigo','Clave','Descripcion','Unidad','Bar_code',
   'Precio_distribuidor_IVA','Precio_mayoreo_IVA','Precio_medio_mayoreo_IVA','Precio_publico_IVA',
-  'Codigo_SAT','Marca','Stock_Actual','Stock_Minimo','Imagen','Almacen_1','Almacen_2'
+  'Codigo_SAT','PROVEEDOR','Stock_Actual','Stock_Minimo','Imagen','Local','Bodeguita'
 ];
 
-var SALE_COLS   = ['ID_Venta','Fecha','Productos','Total','Metodo_Pago','Cliente','Pagos'];
+var SALE_COLS   = ['ID_Venta','Fecha','Productos','Total','Metodo_Pago','Cliente','Notas','Codigo_SAT'];
 var CLIENT_COLS = ['ID_Cliente','Nombre','Telefono','Tipo_Precio'];
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -80,37 +80,53 @@ function doPost(e) {
 // ── HANDLERS ─────────────────────────────────────────────────────────────────
 
 /**
- * Devuelve el inventario completo o paginado.
+ * Devuelve el inventario paginado.
  * offset  = fila inicial (0-based, sin contar cabecera)
  * limit   = cuántas filas devolver (0 = todo)
  *
  * Respuesta: { data, total, hasMore, timestamp }
- * Esto permite al cliente descargar 2000 productos, mostrarlos de inmediato
- * y pedir los siguientes lotes en segundo plano.
+ *
+ * OPTIMIZACIÓN para inventarios grandes (10,000+ productos):
+ *   En lugar de leer TODAS las filas con getDataRange() en cada petición
+ *   (lo que implicaría leer 18,000 filas 9 veces), se lee SOLO el rango
+ *   exacto del lote actual con getRange(). Reduce la carga de Sheets
+ *   de O(n × lotes) a O(lote) por petición.
  */
 function getInventory_(offset, limit) {
-  var sheet  = getSheet_(TAB_INVENTORY);
-  var values = sheet.getDataRange().getValues();
-  if (values.length < 2) return { data: [], total: 0, hasMore: false, timestamp: now_() };
+  var sheet   = getSheet_(TAB_INVENTORY);
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
 
-  var headers  = values[0];
-  var allRows  = values.slice(1);
-  var total    = allRows.length;
+  if (lastRow < 2 || lastCol < 1) {
+    return { data: [], total: 0, hasMore: false, timestamp: now_() };
+  }
 
-  var start   = (offset && offset > 0) ? offset : 0;
-  var end     = (limit  && limit  > 0) ? Math.min(start + limit, total) : total;
-  var pageRows = allRows.slice(start, end);
+  var total   = lastRow - 1;                           // filas de datos (sin cabecera)
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
 
-  var data = pageRows.map(function(row) {
+  var start = (offset && offset > 0) ? offset : 0;    // 0-based desde la primera fila de datos
+  var count = (limit  && limit  > 0)
+    ? Math.min(limit, total - start)
+    : (total - start);
+
+  if (start >= total || count <= 0) {
+    return { data: [], total: total, hasMore: false, timestamp: now_() };
+  }
+
+  // Lee SOLO las filas del lote actual — fila Sheets = offset + 2 (cabecera ocupa fila 1)
+  var sheetStartRow = start + 2;
+  var pageValues    = sheet.getRange(sheetStartRow, 1, count, lastCol).getValues();
+
+  var data = pageValues.map(function(row) {
     var obj = {};
     headers.forEach(function(h, i) { obj[String(h)] = row[i]; });
     return obj;
   });
 
   return {
-    data:     data,
-    total:    total,
-    hasMore:  end < total,
+    data:      data,
+    total:     total,
+    hasMore:   (start + count) < total,
     timestamp: now_(),
   };
 }
@@ -144,12 +160,12 @@ function getSalesReport_() {
     var obj = {};
     invHeaders.forEach(function(h, i) { obj[String(h)] = row[i]; });
     return {
-      Bar_code:          String(obj.Bar_code   || ''),
-      Descripcion:       String(obj.Descripcion || ''),
-      Marca:             String(obj.Marca        || ''),
-      Stock_Actual:      Number(obj.Stock_Actual) || 0,
-      Stock_Minimo:      Number(obj.Stock_Minimo) || 0,
-      Precio_publico_IVA: Number(obj.Precio_publico_IVA) || 0,
+      Bar_code:           String(obj.Bar_code    || ''),
+      Descripcion:        String(obj.Descripcion || ''),
+      PROVEEDOR:          String(obj.PROVEEDOR    || ''),
+      Stock_Actual:       parseNum_(obj.Stock_Actual),
+      Stock_Minimo:       parseNum_(obj.Stock_Minimo),
+      Precio_publico_IVA: parseNum_(obj.Precio_publico_IVA),
     };
   });
 
@@ -188,8 +204,14 @@ function getSalesReport_() {
 
 /**
  * Registra una venta en VENTAS y descuenta stock en INVENTARIO.
- * Cada item puede tener `warehouse`: 'Almacen_1' | 'Almacen_2'.
+ * Cada item puede tener `warehouse`: 'Local' | 'Bodeguita'.
  * Se descuenta en esa columna Y en Stock_Actual.
+ *
+ * ESTRATEGIA "VALIDAR TODO ANTES DE ESCRIBIR NADA":
+ *   Paso 1 — Valida stock suficiente para TODOS los ítems. Si alguno falla,
+ *             se lanza un error SIN haber modificado ninguna celda.
+ *   Paso 2 — Solo si el paso 1 completa sin errores, aplica todos los cambios.
+ *   Esto elimina el riesgo de inventario parcialmente descontado ante un fallo a mitad.
  */
 function registerSale_(payload) {
   var sale  = payload.sale  || {};
@@ -201,47 +223,87 @@ function registerSale_(payload) {
   var invData  = invSheet.getDataRange().getValues();
   var headers  = invData[0];
 
-  var bcCol  = indexOrError_(headers, 'Bar_code');
-  var stkCol = indexOrError_(headers, 'Stock_Actual');
-  var a1Col  = indexOrError_(headers, 'Almacen_1');
-  var a2Col  = indexOrError_(headers, 'Almacen_2');
+  var bcCol     = indexOrError_(headers, 'Bar_code');
+  var stkCol    = indexOrError_(headers, 'Stock_Actual');
+  var a1Col     = indexOrError_(headers, 'Local');
+  var a2Col     = indexOrError_(headers, 'Bodeguita');
+  var codigoCol = headers.indexOf('Codigo'); // -1 si no existe — no es error
+  var claveCol  = headers.indexOf('Clave');  // ídem
+
+  // ── PASO 1: VALIDAR TODO — sin tocar ninguna celda ───────────────────────
+  var updates = []; // acumula { rowIdx, stkCol, newStock, whCol, newWh }
 
   items.forEach(function(item) {
+    var found    = false;
+    var searchKey = String(item.Bar_code).trim();
     for (var i = 1; i < invData.length; i++) {
-      if (String(invData[i][bcCol]).trim() !== String(item.Bar_code).trim()) continue;
+      // Busca primero por Bar_code; si está vacío, por Codigo y luego por Clave.
+      // Esto permite vender productos que no tienen código de barras asignado
+      // en Sheets (el PWA usa Codigo/Clave como clave de respaldo).
+      var rowBarCode = String(invData[i][bcCol]).trim();
+      var rowCodigo  = codigoCol >= 0 ? String(invData[i][codigoCol]).trim() : '';
+      var rowClave   = claveCol  >= 0 ? String(invData[i][claveCol ]).trim() : '';
+      var matches    = rowBarCode === searchKey
+                    || (rowBarCode === '' && rowCodigo !== '' && rowCodigo === searchKey)
+                    || (rowBarCode === '' && rowCodigo === '' && rowClave !== '' && rowClave === searchKey);
+      if (!matches) continue;
+      found = true;
 
-      var curStock = Number(invData[i][stkCol]);
+      var curStock = parseNum_(invData[i][stkCol]);
       var qty      = Number(item.quantity);
       var newStock = curStock - qty;
-      if (newStock < 0) throw new Error('Stock insuficiente para: ' + item.Descripcion + ' (disponible: ' + curStock + ')');
 
-      // Descuenta Stock_Actual
-      invSheet.getRange(i + 1, stkCol + 1).setValue(newStock);
-      invData[i][stkCol] = newStock;
+      if (newStock < 0) {
+        throw new Error(
+          'Stock insuficiente para: ' + (item.Descripcion || item.Bar_code) +
+          ' (disponible: ' + curStock + ', solicitado: ' + qty + ')'
+        );
+      }
 
-      // Descuenta el almacén correspondiente
-      var whCol = (item.warehouse === 'Almacen_2') ? a2Col : a1Col;
-      var curWh = Number(invData[i][whCol]);
+      var whCol = (item.warehouse === 'Bodeguita') ? a2Col : a1Col;
+      var curWh = parseNum_(invData[i][whCol]);
       var newWh = Math.max(0, curWh - qty);
-      invSheet.getRange(i + 1, whCol + 1).setValue(newWh);
-      invData[i][whCol] = newWh;
 
+      updates.push({
+        rowIdx:   i,
+        stkCol:   stkCol,
+        newStock: newStock,
+        whCol:    whCol,
+        newWh:    newWh,
+      });
       break;
     }
+    if (!found) {
+      throw new Error('Producto no encontrado en inventario: ' + (item.Bar_code || item.Descripcion));
+    }
+  });
+
+  // ── PASO 2: APLICAR — solo llega aquí si TODOS los ítems pasaron validación ──
+  updates.forEach(function(u) {
+    invSheet.getRange(u.rowIdx + 1, u.stkCol + 1).setValue(u.newStock);
+    invSheet.getRange(u.rowIdx + 1, u.whCol  + 1).setValue(u.newWh);
   });
 
   // Registra en VENTAS
   var saleId = 'VTA-' + new Date().getTime();
-  var productsSummary = JSON.stringify(items.map(function(i) {
-    return {
-      c: i.Bar_code,
-      n: i.Descripcion,
-      q: i.quantity,
-      p: i.activePrice,
-      wh: i.warehouse,
-      pl: i.priceLevel,
-    };
-  }));
+
+  // Formato legible para la columna Productos
+  var productsSummary = items.map(function(item) {
+    var precio = Number(item.activePrice) || 0;
+    var subtotal = precio * Number(item.quantity);
+    return item.quantity + 'x  ' + (item.Descripcion || '') +
+           '  —  $' + precio.toLocaleString() +
+           ' c/u  |  Subtotal: $' + subtotal.toLocaleString() +
+           '  (' + (item.warehouse || '') + ')';
+  }).join('\n');
+
+  // Códigos SAT únicos de todos los productos de la venta
+  var satMap = {};
+  items.forEach(function(item) {
+    var sat = String(item.Codigo_SAT || '').trim();
+    if (sat) satMap[sat] = true;
+  });
+  var satCodes = Object.keys(satMap).join(', ');
 
   var salesSheet = ss.getSheetByName(TAB_SALES);
   salesSheet.appendRow([
@@ -251,7 +313,8 @@ function registerSale_(payload) {
     Number(sale.total) || 0,
     sale.paymentMethod || '',
     sale.customer      || '',
-    sale.pagos         || '',
+    sale.notas         || '',
+    satCodes,
   ]);
 
   return { success: true, saleId: saleId, timestamp: now_() };
@@ -264,13 +327,23 @@ function updateProduct_(payload) {
   var product = payload.product || {};
   if (!product.Bar_code) throw new Error('Bar_code es obligatorio');
 
-  var sheet   = getSheet_(TAB_INVENTORY);
-  var data    = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var bcCol   = indexOrError_(headers, 'Bar_code');
+  var sheet      = getSheet_(TAB_INVENTORY);
+  var data       = sheet.getDataRange().getValues();
+  var headers    = data[0];
+  var bcCol      = indexOrError_(headers, 'Bar_code');
+  var codigoCol  = headers.indexOf('Codigo');
+  var claveCol   = headers.indexOf('Clave');
+  var searchKey  = String(product.Bar_code).trim();
 
   for (var i = 1; i < data.length; i++) {
-    if (String(data[i][bcCol]).trim() !== String(product.Bar_code).trim()) continue;
+    // Mismo criterio de búsqueda que registerSale_: Bar_code → Codigo → Clave
+    var rowBarCode = String(data[i][bcCol]).trim();
+    var rowCodigo  = codigoCol >= 0 ? String(data[i][codigoCol]).trim() : '';
+    var rowClave   = claveCol  >= 0 ? String(data[i][claveCol ]).trim() : '';
+    var matches    = rowBarCode === searchKey
+                  || (rowBarCode === '' && rowCodigo !== '' && rowCodigo === searchKey)
+                  || (rowBarCode === '' && rowCodigo === '' && rowClave !== '' && rowClave === searchKey);
+    if (!matches) continue;
     headers.forEach(function(h, j) {
       if (product[h] !== undefined && product[h] !== null) {
         sheet.getRange(i + 1, j + 1).setValue(product[h]);
@@ -327,6 +400,16 @@ function addClient_(payload) {
 
 
 // ── UTILIDADES ────────────────────────────────────────────────────────────────
+
+/**
+ * Convierte un valor de celda a número limpio.
+ * Maneja: 5, "5", "$5.00", "$5,000.00", "5,5" (coma decimal), etc.
+ */
+function parseNum_(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return val;
+  return parseFloat(String(val).replace(/[$\s]/g, '').replace(/,/g, '')) || 0;
+}
 
 function indexOrError_(headers, col) {
   var idx = headers.indexOf(col);

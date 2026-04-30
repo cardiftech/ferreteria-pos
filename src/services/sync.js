@@ -22,10 +22,18 @@ function parseNum(val) {
 }
 
 function normalizeProduct(p) {
+  // Bar_code es el PK de Dexie. Si está vacío en Sheets usamos Codigo como
+  // respaldo (y Clave como último recurso) para que los productos sin código
+  // de barras sigan siendo accesibles en el POS y el inventario.
+  // El sync hace clear()+bulkPut() completo, así que la clave es siempre
+  // consistente. Cuando el usuario agregue el barcode real en Sheets,
+  // el siguiente sync lo migra automáticamente al barcode correcto.
+  const barCode = String(p.Bar_code ?? '').trim()
+               || String(p.Codigo   ?? '').trim()
+               || String(p.Clave    ?? '').trim();
   return {
     ...p,
-    // Bar_code siempre como string; Dexie necesita PK consistente y no vacía
-    Bar_code:                 String(p.Bar_code ?? '').trim(),
+    Bar_code:                 barCode,
     // Codigo_SAT como string para evitar problemas al enviarlo al GAS
     Codigo_SAT:               String(p.Codigo_SAT ?? '').trim(),
     Precio_distribuidor_IVA:  parseNum(p.Precio_distribuidor_IVA),
@@ -79,6 +87,7 @@ export async function syncInventory(onProgress) {
     const normalized = result.data.map(normalizeProduct);
 
     for (const p of normalized) {
+      // Solo omitir si no hay ningún identificador (Bar_code, Codigo ni Clave)
       if (p.Bar_code === '') { skippedEmpty++; continue; }
       allProducts.push(p);
     }
