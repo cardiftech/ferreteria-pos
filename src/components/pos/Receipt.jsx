@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { CheckCircle2, Printer, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Printer, RotateCcw, WifiOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { round2 } from '../../hooks/useCart';
@@ -186,6 +186,7 @@ export default function Receipt({ sale, onClose, notify }) {
   const {
     saleId, items, total, paymentMethod,
     cashReceived, change, customer, notas, timestamp,
+    isOffline,
   } = sale;
 
   // Referencia a la ventana de impresión — si sigue abierta, solo llama print()
@@ -219,12 +220,27 @@ export default function Receipt({ sale, onClose, notify }) {
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
 
-        {/* Cabecera verde */}
-        <div className="bg-green-50 px-5 py-5 text-center border-b border-green-100">
-          <CheckCircle2 size={44} className="mx-auto text-green-600 mb-2" />
-          <h2 className="text-lg font-bold text-green-800">¡Venta Registrada!</h2>
-          <p className="text-xs text-green-600 mt-0.5">El inventario fue actualizado</p>
+        {/* Cabecera */}
+        <div className={`px-5 py-5 text-center border-b
+                        ${isOffline ? 'bg-amber-50 border-amber-100' : 'bg-green-50 border-green-100'}`}>
+          <CheckCircle2 size={44} className={`mx-auto mb-2 ${isOffline ? 'text-amber-500' : 'text-green-600'}`} />
+          <h2 className={`text-lg font-bold ${isOffline ? 'text-amber-800' : 'text-green-800'}`}>
+            {isOffline ? '¡Venta Guardada!' : '¡Venta Registrada!'}
+          </h2>
+          <p className={`text-xs mt-0.5 ${isOffline ? 'text-amber-600' : 'text-green-600'}`}>
+            {isOffline ? 'Guardada localmente — sin conexión' : 'El inventario fue actualizado'}
+          </p>
         </div>
+
+        {/* Banner offline */}
+        {isOffline && (
+          <div className="px-4 py-2.5 bg-orange-50 border-b border-orange-100 flex gap-2">
+            <WifiOff size={14} className="text-orange-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-orange-700 leading-snug">
+              Se registrará en el servidor automáticamente cuando vuelva la conexión.
+            </p>
+          </div>
+        )}
 
         {/* Cuerpo del recibo */}
         <div className="px-5 py-4 space-y-2 text-sm">

@@ -6,7 +6,10 @@ import {
   useRef,
   useCallback,
 } from 'react';
-import { syncInventory, shouldSync, getLastSyncTime } from '../services/sync';
+import {
+  syncInventory, syncClients, syncPendingClients,
+  shouldSync, getLastSyncTime,
+} from '../services/sync';
 
 const VISIBILITY_SYNC_MS = 30 * 60 * 1000; // re-sync si vuelven tras 30+ min ausente
 
@@ -79,6 +82,13 @@ export function AppProvider({ children }) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'success' });
         dispatch({ type: 'SET_LAST_SYNC',     payload: result.timestamp });
+
+        // Sube clientes guardados offline y luego refresca la lista desde Sheets.
+        // El orden importa: primero subir los LOCAL-* para que aparezcan en la
+        // respuesta fresca de Sheets con su ID real.
+        await syncPendingClients().catch(() => {});
+        await syncClients().catch(() => {});
+
         // Notifica a useInventory que hay datos nuevos (cubre casos donde liveQuery no dispara)
         window.dispatchEvent(new CustomEvent('ferrepos:synced'));
         return result;
@@ -113,7 +123,7 @@ export function AppProvider({ children }) {
       if (!navigator.onLine) return;
       const last = await getLastSyncTime();
       if (!last) { sync(); return; }
-      if (Date.now() - new Date(last).getTime() > VISIBILITY_SYNC_MS) sync();
+      if (Date.now() - new Date(last).getTime() > VISIBILITY_SYNC_MS) sync(true);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -127,7 +137,7 @@ export function AppProvider({ children }) {
       {state.notification && (
         <div
           className={[
-            'fixed bottom-5 left-1/2 -translate-x-1/2 z-[9999]',
+            'fixed bottom-20 left-1/2 -translate-x-1/2 z-[9999]',
             'px-5 py-3 rounded-xl shadow-xl text-white text-sm font-medium',
             'max-w-xs w-max text-center',
             state.notification.type === 'success' ? 'bg-green-600' :

@@ -4,7 +4,7 @@
  * never block the UI.
  *
  * Protocol:
- *  ← { type: 'SET_PRODUCTS', products: [{Bar_code, Codigo, Clave, Descripcion}] }
+ *  ← { type: 'SET_PRODUCTS', products: [{Bar_code, Codigo, Clave, Descripcion, PROVEEDOR}] }
  *  ← { type: 'SEARCH', query: string, id: number }
  *  → { type: 'RESULTS', id, barCodes: string[] | null, truncated: bool, total: number }
  *
@@ -13,7 +13,10 @@
 import Fuse from 'fuse.js';
 
 const FUSE_OPTIONS = {
-  keys: [{ name: 'Descripcion', weight: 1 }],
+  keys: [
+    { name: 'Descripcion', weight: 1   },
+    { name: 'PROVEEDOR',   weight: 0.6 },
+  ],
   threshold:          0.30,
   includeScore:       true,
   minMatchCharLength: 3,
@@ -52,14 +55,15 @@ self.onmessage = ({ data }) => {
 
     const t = trimmed.toLowerCase();
 
-    // 1. Exact/prefix matches on codes (these always rank first)
+    // 1. Exact/prefix matches on codes and supplier (these always rank first)
     const exactSet   = new Set();
     const exactCodes = [];
     for (const p of slimProducts) {
       if (
-        String(p.Bar_code).includes(trimmed) ||
-        String(p.Codigo).includes(trimmed)   ||
-        String(p.Clave).toLowerCase().includes(t)
+        String(p.Bar_code).includes(trimmed)          ||
+        String(p.Codigo).includes(trimmed)             ||
+        String(p.Clave).toLowerCase().includes(t)      ||
+        String(p.PROVEEDOR).toLowerCase().includes(t)
       ) {
         if (!exactSet.has(p.Bar_code)) {
           exactSet.add(p.Bar_code);

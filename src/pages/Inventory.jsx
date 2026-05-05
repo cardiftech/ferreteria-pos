@@ -149,7 +149,7 @@ export default function Inventory() {
       if (omitidos > 0) {
         const partes = [];
         if (result.skippedEmpty > 0)
-          partes.push(`${result.skippedEmpty} sin código de barras`);
+          partes.push(`${result.skippedEmpty} sin identificador`);
         if (result.skippedDupe > 0)
           partes.push(`${result.skippedDupe} con código repetido`);
         msg += ` · ${omitidos} omitidos (${partes.join(', ')})`;

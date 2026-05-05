@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ScanLine, Search, X, ShoppingCart, Plus, Minus, Trash2,
   CheckCircle2, ChevronDown, ChevronRight, User, Tag, UserPlus, ArrowLeft,
+  WifiOff,
 } from 'lucide-react';
 import { useInventory }  from '../hooks/useInventory';
 import { useSearch }     from '../hooks/useSearch';
@@ -58,7 +59,7 @@ function PriceLevelModal({ current, onSelect, onClose }) {
   );
 }
 
-function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
+function ClientModal({ clients, selected, onSelect, onClose, onClientAdded, isOnline = true }) {
   const [view, setView]   = useState('list');   // 'list' | 'new'
   const [q, setQ]         = useState('');
   // ── formulario nuevo cliente ──
@@ -77,6 +78,31 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
     if (!nombre.trim()) { setFormErr('El nombre es obligatorio'); return; }
     setSaving(true);
     setFormErr('');
+
+    // ── Sin conexión: guardar localmente con ID temporal ──────────────────
+    // Se sube automáticamente al servidor la próxima vez que haya sync.
+    if (!navigator.onLine) {
+      const tempId = `LOCAL-${Date.now()}`;
+      const newClient = {
+        ID_Cliente:  tempId,
+        Nombre:      nombre.trim(),
+        Telefono:    telefono.trim(),
+        Tipo_Precio: tipoPrecio,
+      };
+      try {
+        await db.clients.put(newClient);
+        onClientAdded?.();
+        onSelect(newClient);
+        onClose();
+      } catch (err) {
+        setFormErr('Error al guardar el cliente localmente');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    // ── Con conexión: flujo normal ────────────────────────────────────────
     try {
       const result = await api.addClient({
         Nombre:      nombre.trim(),
@@ -84,7 +110,6 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
         Tipo_Precio: tipoPrecio,
       });
       if (result?.error) throw new Error(result.error);
-      // Guarda en IndexedDB local también
       const newClient = {
         ID_Cliente:  result.ID_Cliente,
         Nombre:      nombre.trim(),
@@ -92,8 +117,8 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
         Tipo_Precio: tipoPrecio,
       };
       await db.clients.put(newClient);
-      onClientAdded?.();          // recarga la lista en useClients
-      onSelect(newClient);        // selecciona el cliente recién creado
+      onClientAdded?.();
+      onSelect(newClient);
       onClose();
     } catch (err) {
       setFormErr(err.message || 'Error al guardar cliente');
@@ -180,7 +205,15 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{c.Nombre}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium text-sm truncate">{c.Nombre}</p>
+                        {String(c.ID_Cliente).startsWith('LOCAL-') && (
+                          <span className="text-[10px] font-semibold bg-amber-50 text-amber-500
+                                           border border-amber-100 px-1 py-0.5 rounded leading-none flex-shrink-0">
+                            Local
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-400">{PRICE_LEVELS[c.Tipo_Precio] || c.Tipo_Precio}</p>
                     </div>
                     {selected?.ID_Cliente === c.ID_Cliente && (
@@ -196,6 +229,16 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
         {/* ── Vista: formulario nuevo cliente ── */}
         {view === 'new' && (
           <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+            {/* Aviso sin conexión */}
+            {!isOnline && (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+                <WifiOff size={13} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 leading-snug">
+                  Sin conexión — se guardará localmente y se subirá al servidor
+                  automáticamente cuando vuelva la red.
+                </p>
+              </div>
+            )}
             <p className="text-sm text-gray-500">Completa los datos del cliente frecuente.</p>
 
             {/* Nombre */}
@@ -267,7 +310,7 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded }) {
               ) : (
                 <UserPlus size={16} />
               )}
-              {saving ? 'Guardando…' : 'Guardar cliente'}
+              {saving ? 'Guardando…' : isOnline ? 'Guardar cliente' : 'Guardar sin conexión'}
             </button>
           </div>
         )}
@@ -474,10 +517,40 @@ export default function POS() {
     // ── Respaldo local ANTES de llamar a la API ────────────────────────────
     // Si la red se corta exactamente mientras el request está en vuelo,
     // esta entrada (synced: 0) queda como evidencia de la venta intentada.
-    // El carrito NO se limpia si la API falla → el cajero puede reintentar.
+    // También sirve como almacén para ventas offline intencionales.
+    //
+    // stockDecremented: 1 → el stock ya se descontó aquí (ruta offline).
+    // PendingSalesModal.handleRetry lo lee para evitar un segundo descuento.
+    const isCurrentlyOffline = !navigator.onLine;
     const pendingId = await db.pendingSales
-      .add({ ...salePayload, timestamp: new Date().toISOString(), synced: 0 })
+      .add({
+        ...salePayload,
+        timestamp:        new Date().toISOString(),
+        synced:           0,
+        stockDecremented: isCurrentlyOffline ? 1 : 0,
+      })
       .catch(() => null);
+
+    // ── Offline: omite la API, registra localmente y procede ─────────────
+    if (isCurrentlyOffline) {
+      const tempId = `TEMP-${pendingId ?? Date.now()}`;
+      setReceipt({
+        saleId:        tempId,
+        items:         [...cart.items],
+        total,
+        paymentMethod: payData.method,
+        cashReceived:  payData.cashReceived || 0,
+        change,
+        customer:      payData.customer || selectedClient?.Nombre || '',
+        notas:         payData.notes   || '',
+        timestamp:     new Date().toISOString(),
+        isOffline:     true,
+      });
+      decrementLocalStock(cart.items).catch(() => {});
+      clearCart();
+      setShowPay(false);
+      return;
+    }
 
     const result = await api.registerSale(salePayload);
     if (result?.error) throw new Error(result.error);
@@ -505,7 +578,7 @@ export default function POS() {
     setShowPay(false);
   };
 
-  const canFinalize = cart.items.length > 0 && state.isOnline;
+  const canFinalize = cart.items.length > 0;
 
   return (
     <>
@@ -831,12 +904,18 @@ export default function POS() {
           disabled={!canFinalize}
           className={`w-full py-3.5 rounded-2xl font-semibold text-base flex items-center
                       justify-center gap-2 transition-all
-                      ${canFinalize
-                        ? 'bg-green-500 hover:bg-green-600 active:bg-green-700 text-white shadow-sm'
-                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                      ${!canFinalize
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        : !state.isOnline
+                          ? 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow-sm'
+                          : 'bg-green-500 hover:bg-green-600 active:bg-green-700 text-white shadow-sm'}`}
         >
           <CheckCircle2 size={20} />
-          {!state.isOnline ? 'Sin conexión' : cart.items.length === 0 ? 'Carrito vacío' : 'Finalizar Venta'}
+          {cart.items.length === 0
+            ? 'Carrito vacío'
+            : !state.isOnline
+              ? 'Cobrar sin conexión'
+              : 'Finalizar Venta'}
         </button>
       </div>
 
@@ -905,6 +984,7 @@ export default function POS() {
           onSelect={handleClientSelect}
           onClose={() => setClientModal(false)}
           onClientAdded={reloadClients}
+          isOnline={state.isOnline}
         />
       )}
     </>

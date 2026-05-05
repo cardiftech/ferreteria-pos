@@ -60,9 +60,12 @@ export default function PendingSalesModal({ onClose }) {
       const result = await api.registerSale({ sale: record.sale, items: record.items });
       if (result?.error) throw new Error(result.error);
 
-      // Éxito: marcar como sincronizada y descontar stock localmente
+      // Éxito: marcar como sincronizada.
+      // Solo descontar stock si no se hizo ya al guardar offline (stockDecremented).
       await db.pendingSales.update(record.id, { synced: 1, saleId: result.saleId });
-      decrementLocalStock(record.items).catch(() => {});
+      if (!record.stockDecremented) {
+        decrementLocalStock(record.items).catch(() => {});
+      }
       // liveQuery la eliminará automáticamente de la lista tras el update
     } catch (err) {
       setS(record.id, 'error');

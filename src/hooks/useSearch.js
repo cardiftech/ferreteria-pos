@@ -51,8 +51,8 @@ export function useSearch(products, query) {
   // Send slim product list to worker whenever inventory changes
   useEffect(() => {
     if (products.length === 0) return;
-    const slim = products.map(({ Bar_code, Codigo, Clave, Descripcion }) => ({
-      Bar_code, Codigo, Clave, Descripcion,
+    const slim = products.map(({ Bar_code, Codigo, Clave, Descripcion, PROVEEDOR }) => ({
+      Bar_code, Codigo, Clave, Descripcion, PROVEEDOR,
     }));
     getWorker().postMessage({ type: 'SET_PRODUCTS', products: slim });
   }, [products]);

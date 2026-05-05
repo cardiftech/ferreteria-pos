@@ -1,4 +1,4 @@
-import db from './db';
+import db  from './db';
 import { api } from './api';
 
 const SYNC_KEY         = 'lastSync';
@@ -28,12 +28,16 @@ function normalizeProduct(p) {
   // El sync hace clear()+bulkPut() completo, así que la clave es siempre
   // consistente. Cuando el usuario agregue el barcode real en Sheets,
   // el siguiente sync lo migra automáticamente al barcode correcto.
-  const barCode = String(p.Bar_code ?? '').trim()
-               || String(p.Codigo   ?? '').trim()
-               || String(p.Clave    ?? '').trim();
+  const rawBarCode = String(p.Bar_code ?? '').trim();
+  const barCode    = rawBarCode
+                  || String(p.Codigo   ?? '').trim()
+                  || String(p.Clave    ?? '').trim();
   return {
     ...p,
-    Bar_code:                 barCode,
+    Bar_code:        barCode,
+    // true cuando Sheets no tiene Bar_code real → el PK viene del Codigo/Clave.
+    // Usado en la UI para distinguir "código interno" de "código de barras real".
+    _isFallbackKey:  rawBarCode === '',
     // Codigo_SAT como string para evitar problemas al enviarlo al GAS
     Codigo_SAT:               String(p.Codigo_SAT ?? '').trim(),
     Precio_distribuidor_IVA:  parseNum(p.Precio_distribuidor_IVA),
@@ -99,12 +103,47 @@ export async function syncInventory(onProgress) {
     onProgress?.(offset, total);
   }
 
-  // Deduplicar por Bar_code (última fila en Sheets gana, igual que bulkPut)
-  // Esto hace que allProducts.length coincida exactamente con lo que Dexie guarda.
-  const seen    = new Map();
+  // ── Deduplicación inteligente ────────────────────────────────────────────────
+  // Cuando varios productos comparten el mismo Bar_code (barcode de categoría o
+  // error de captura en Sheets), en lugar de descartar todos salvo el último,
+  // les asignamos claves únicas para que todos sean localizables en el POS:
+  //   1. Si el producto tiene Codigo propio → usar Codigo como clave.
+  //   2. Si no tiene Codigo → clave sintética "barcode:Descripcion".
+  // Los productos sin duplicados se comportan exactamente igual que antes.
+  //
+  // Limitación aceptada: ventas de productos con clave sintética no decrementan
+  // stock en Sheets (el GAS no puede encontrar la fila por esa clave). El POS
+  // local sí funciona correctamente. La solución definitiva es asignar barcodes
+  // o Codigos únicos en Sheets.
+
+  // Paso 1: contar cuántas veces aparece cada Bar_code
+  const barCodeCount = new Map();
   for (const p of allProducts) {
-    if (seen.has(p.Bar_code)) skippedDupe++;
-    seen.set(p.Bar_code, p);
+    barCodeCount.set(p.Bar_code, (barCodeCount.get(p.Bar_code) || 0) + 1);
+  }
+
+  // Paso 2: deduplicar, rescatando duplicados con claves únicas
+  const seen = new Map();
+  for (const p of allProducts) {
+    const isDupe = (barCodeCount.get(p.Bar_code) || 1) > 1;
+    const codigo = String(p.Codigo ?? '').trim();
+
+    let effectiveKey, stored;
+    if (isDupe && codigo) {
+      // Duplicado con Codigo → usar Codigo como clave (igual que productos sin barcode)
+      effectiveKey = codigo;
+      stored = { ...p, Bar_code: codigo, _isFallbackKey: true };
+    } else if (isDupe) {
+      // Duplicado sin Codigo → clave sintética "barcode:Descripcion"
+      effectiveKey = `${p.Bar_code}:${String(p.Descripcion ?? '').trim()}`;
+      stored = { ...p, Bar_code: effectiveKey, _isFallbackKey: true };
+    } else {
+      effectiveKey = p.Bar_code;
+      stored = p;
+    }
+
+    if (seen.has(effectiveKey)) skippedDupe++;
+    seen.set(effectiveKey, stored);
   }
   const unique = Array.from(seen.values());
 
@@ -125,11 +164,48 @@ export async function syncClients() {
     if (!Array.isArray(data)) return;
     const clean = data.map(normalizeClient);
     await db.transaction('rw', db.clients, async () => {
+      // Preserva clientes guardados offline (ID temporal LOCAL-*) que aún no se
+      // han subido al servidor para que no se pierdan al reemplazar la lista.
+      const localPending = await db.clients
+        .filter(c => String(c.ID_Cliente).startsWith('LOCAL-'))
+        .toArray();
       await db.clients.clear();
-      await db.clients.bulkPut(clean);
+      await db.clients.bulkPut([...clean, ...localPending]);
     });
   } catch (_) {
     // Clientes son opcionales — no romper si la hoja no existe aún
+  }
+}
+
+/**
+ * Sube al servidor los clientes guardados offline (ID_Cliente con prefijo LOCAL-).
+ * Se llama ANTES de syncClients para que, si el servidor los acepta, ya aparezcan
+ * con ID real cuando llegue la lista fresca de Sheets.
+ */
+export async function syncPendingClients() {
+  try {
+    const pending = await db.clients
+      .filter(c => String(c.ID_Cliente).startsWith('LOCAL-'))
+      .toArray();
+    if (pending.length === 0) return;
+
+    for (const c of pending) {
+      try {
+        const result = await api.addClient({
+          Nombre:      c.Nombre,
+          Telefono:    c.Telefono,
+          Tipo_Precio: c.Tipo_Precio,
+        });
+        if (result?.error || !result?.ID_Cliente) continue;
+        // Reemplaza el ID temporal por el ID real que asignó el servidor
+        await db.clients.delete(c.ID_Cliente);
+        await db.clients.put(normalizeClient({ ...c, ID_Cliente: result.ID_Cliente }));
+      } catch (_) {
+        // Dejarlo para el próximo sync — no bloquear el resto
+      }
+    }
+  } catch (_) {
+    // Silent — clientes pendientes son opcionales
   }
 }
 

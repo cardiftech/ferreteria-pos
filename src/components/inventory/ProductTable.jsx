@@ -55,7 +55,7 @@ export default function ProductTable({ products, onEdit }) {
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap text-xs uppercase tracking-wide">
-                Bar code
+                Código
               </th>
               <SortTh label="Descripción"  sortKey="Descripcion"        current={sortKey} dir={sortDir} onSort={toggleSort} className="text-left" />
               <SortTh label="Proveedor"    sortKey="PROVEEDOR"          current={sortKey} dir={sortDir} onSort={toggleSort} className="text-left hidden md:table-cell" />
@@ -86,9 +86,19 @@ export default function ProductTable({ products, onEdit }) {
                     low ? 'bg-orange-50 hover:bg-orange-50' : '',
                   ].join(' ')}
                 >
-                  {/* Bar code */}
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 whitespace-nowrap">
-                    {p.Bar_code}
+                  {/* Código (barcode real o código interno) */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`font-mono text-xs ${p._isFallbackKey ? 'text-blue-500' : 'text-gray-400'}`}>
+                        {p.Bar_code}
+                      </span>
+                      {p._isFallbackKey && (
+                        <span className="text-[10px] font-semibold bg-blue-50 text-blue-400
+                                         border border-blue-100 px-1 py-0.5 rounded leading-none">
+                          Cód. Int.
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Descripción */}
