@@ -83,11 +83,10 @@ export function AppProvider({ children }) {
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'success' });
         dispatch({ type: 'SET_LAST_SYNC',     payload: result.timestamp });
 
-        // Sube clientes guardados offline y luego refresca la lista desde Sheets.
-        // El orden importa: primero subir los LOCAL-* para que aparezcan en la
-        // respuesta fresca de Sheets con su ID real.
-        await syncPendingClients().catch(() => {});
-        await syncClients().catch(() => {});
+        // Orden importa: subir LOCAL-* primero para que tengan ID real antes de
+        // que syncClients traiga la lista fresca de Sheets con esos mismos IDs.
+        await syncPendingClients().catch(err => console.warn('[sync] pending clients:', err));
+        await syncClients().catch(err => console.warn('[sync] clients:', err));
 
         // Notifica a useInventory que hay datos nuevos (cubre casos donde liveQuery no dispara)
         window.dispatchEvent(new CustomEvent('ferrepos:synced'));

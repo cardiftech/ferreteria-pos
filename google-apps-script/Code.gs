@@ -12,8 +12,8 @@
  *   Precio_distribuidor_IVA | Precio_mayoreo_IVA | Precio_medio_mayoreo_IVA | Precio_publico_IVA |
  *   Codigo_SAT | PROVEEDOR | Stock_Actual | Stock_Minimo | Imagen | Local | Bodeguita
  *
- * VENTAS (A→G):
- *   ID_Venta | Fecha | Productos | Total | Metodo_Pago | Cliente | Pagos
+ * VENTAS (A→H):
+ *   ID_Venta | Fecha | Productos | Total | Metodo_Pago | Cliente | Notas | Codigo_SAT
  *
  * CLIENTES (A→D):
  *   ID_Cliente | Nombre | Telefono | Tipo_Precio
@@ -234,24 +234,10 @@ function registerSale_(payload) {
   var updates = []; // acumula { rowIdx, stkCol, newStock, whCol, newWh }
 
   items.forEach(function(item) {
-    var found    = false;
+    var found     = false;
     var searchKey = String(item.Bar_code).trim();
     for (var i = 1; i < invData.length; i++) {
-      // Estrategia de búsqueda (orden de prioridad):
-      // 1. Bar_code exacto en Sheets.
-      // 2. Producto con clave sintética "barcode:Descripcion" → extraer la parte de barcode.
-      // 3. Codigo coincide (cubre productos cuya clave en el PWA es su Codigo).
-      // 4. Clave coincide (cuando Bar_code y Codigo están vacíos en Sheets).
-      var rowBarCode  = String(invData[i][bcCol]).trim();
-      var rowCodigo   = codigoCol >= 0 ? String(invData[i][codigoCol]).trim() : '';
-      var rowClave    = claveCol  >= 0 ? String(invData[i][claveCol ]).trim() : '';
-      var colonIdx    = searchKey.indexOf(':');
-      var searchBC    = colonIdx >= 0 ? searchKey.substring(0, colonIdx) : searchKey;
-      var matches     = rowBarCode === searchKey
-                     || (colonIdx >= 0 && rowBarCode === searchBC)
-                     || (rowCodigo !== '' && rowCodigo === searchKey)
-                     || (rowBarCode === '' && rowCodigo === '' && rowClave !== '' && rowClave === searchKey);
-      if (!matches) continue;
+      if (!matchesSearchKey_(invData[i], bcCol, codigoCol, claveCol, searchKey)) continue;
       found = true;
 
       var curStock = parseNum_(invData[i][stkCol]);
@@ -341,17 +327,7 @@ function updateProduct_(payload) {
   var searchKey  = String(product.Bar_code).trim();
 
   for (var i = 1; i < data.length; i++) {
-    // Mismo criterio de búsqueda que registerSale_: Bar_code → Codigo → Clave
-    var rowBarCode = String(data[i][bcCol]).trim();
-    var rowCodigo  = codigoCol >= 0 ? String(data[i][codigoCol]).trim() : '';
-    var rowClave   = claveCol  >= 0 ? String(data[i][claveCol ]).trim() : '';
-    var colonIdx   = searchKey.indexOf(':');
-    var searchBC   = colonIdx >= 0 ? searchKey.substring(0, colonIdx) : searchKey;
-    var matches    = rowBarCode === searchKey
-                  || (colonIdx >= 0 && rowBarCode === searchBC)
-                  || (rowCodigo !== '' && rowCodigo === searchKey)
-                  || (rowBarCode === '' && rowCodigo === '' && rowClave !== '' && rowClave === searchKey);
-    if (!matches) continue;
+    if (!matchesSearchKey_(data[i], bcCol, codigoCol, claveCol, searchKey)) continue;
     headers.forEach(function(h, j) {
       if (product[h] !== undefined && product[h] !== null) {
         sheet.getRange(i + 1, j + 1).setValue(product[h]);
@@ -411,12 +387,38 @@ function addClient_(payload) {
 
 /**
  * Convierte un valor de celda a número limpio.
- * Maneja: 5, "5", "$5.00", "$5,000.00", "5,5" (coma decimal), etc.
+ * Maneja: 5, "5", "$5.00", "$5,000.00", etc.
  */
 function parseNum_(val) {
   if (val === null || val === undefined || val === '') return 0;
   if (typeof val === 'number') return val;
-  return parseFloat(String(val).replace(/[$\s]/g, '').replace(/,/g, '')) || 0;
+  return parseFloat(String(val).replace(/[$,\s]/g, '')) || 0;
+}
+
+/**
+ * Devuelve true si la fila del inventario coincide con searchKey.
+ * Estrategia (orden de prioridad):
+ *   1. Bar_code exacto en Sheets.
+ *   2. Parte barcode de clave sintética "barcode:Descripcion" del PWA.
+ *   3. Codigo coincide (productos cuya clave en el PWA es su Codigo).
+ *   4. Clave coincide (cuando Bar_code y Codigo están vacíos en Sheets).
+ *
+ * @param {Array}  row       - Fila del inventario (array de valores).
+ * @param {number} bcCol     - Índice de la columna Bar_code.
+ * @param {number} codigoCol - Índice de la columna Codigo (-1 si no existe).
+ * @param {number} claveCol  - Índice de la columna Clave (-1 si no existe).
+ * @param {string} searchKey - Clave a buscar (viene del PWA).
+ */
+function matchesSearchKey_(row, bcCol, codigoCol, claveCol, searchKey) {
+  var rowBarCode = String(row[bcCol]).trim();
+  var rowCodigo  = codigoCol >= 0 ? String(row[codigoCol]).trim() : '';
+  var rowClave   = claveCol  >= 0 ? String(row[claveCol ]).trim() : '';
+  var colonIdx   = searchKey.indexOf(':');
+  var searchBC   = colonIdx >= 0 ? searchKey.substring(0, colonIdx) : searchKey;
+  return rowBarCode === searchKey
+      || (colonIdx >= 0 && rowBarCode === searchBC)
+      || (rowCodigo !== '' && rowCodigo === searchKey)
+      || (rowBarCode === '' && rowCodigo === '' && rowClave !== '' && rowClave === searchKey);
 }
 
 function indexOrError_(headers, col) {

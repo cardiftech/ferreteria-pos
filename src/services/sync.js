@@ -4,6 +4,10 @@ import { api } from './api';
 const SYNC_KEY         = 'lastSync';
 const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hora — sincroniza al abrir si pasó más de 1h
 
+/** Prefijo de IDs para clientes creados sin conexión.
+ *  Exportado para que POS.jsx y otros componentes lo usen sin magic strings. */
+export const LOCAL_ID_PREFIX = 'LOCAL-';
+
 export async function getLastSyncTime() {
   const meta = await db.syncMeta.get(SYNC_KEY);
   return meta?.value ?? null;
@@ -163,32 +167,39 @@ export async function syncClients() {
     const { data } = await api.getClients();
     if (!Array.isArray(data)) return;
     const clean = data.map(normalizeClient);
+
+    // Lee los LOCAL-* ANTES de la transacción para evitar race conditions:
+    // syncPendingClients() puede eliminar y re-agregar entradas LOCAL-* justo
+    // antes de que corramos, y hacer esta lectura dentro del lock sería más lento.
+    const localPending = await db.clients
+      .filter(c => String(c.ID_Cliente).startsWith(LOCAL_ID_PREFIX))
+      .toArray();
+
     await db.transaction('rw', db.clients, async () => {
-      // Preserva clientes guardados offline (ID temporal LOCAL-*) que aún no se
-      // han subido al servidor para que no se pierdan al reemplazar la lista.
-      const localPending = await db.clients
-        .filter(c => String(c.ID_Cliente).startsWith('LOCAL-'))
-        .toArray();
       await db.clients.clear();
       await db.clients.bulkPut([...clean, ...localPending]);
     });
-  } catch (_) {
+  } catch (err) {
+    console.warn('[syncClients]', err);
     // Clientes son opcionales — no romper si la hoja no existe aún
   }
 }
 
 /**
  * Sube al servidor los clientes guardados offline (ID_Cliente con prefijo LOCAL-).
- * Se llama ANTES de syncClients para que, si el servidor los acepta, ya aparezcan
- * con ID real cuando llegue la lista fresca de Sheets.
+ * Debe llamarse ANTES de syncClients para que el servidor asigne IDs reales
+ * antes de que la lista fresca de Sheets llegue al cliente.
  */
 export async function syncPendingClients() {
   try {
     const pending = await db.clients
-      .filter(c => String(c.ID_Cliente).startsWith('LOCAL-'))
+      .filter(c => String(c.ID_Cliente).startsWith(LOCAL_ID_PREFIX))
       .toArray();
     if (pending.length === 0) return;
 
+    // Sube cada cliente al servidor y acumula los cambios exitosos
+    const toDelete = [];
+    const toPut    = [];
     for (const c of pending) {
       try {
         const result = await api.addClient({
@@ -196,16 +207,28 @@ export async function syncPendingClients() {
           Telefono:    c.Telefono,
           Tipo_Precio: c.Tipo_Precio,
         });
-        if (result?.error || !result?.ID_Cliente) continue;
-        // Reemplaza el ID temporal por el ID real que asignó el servidor
-        await db.clients.delete(c.ID_Cliente);
-        await db.clients.put(normalizeClient({ ...c, ID_Cliente: result.ID_Cliente }));
-      } catch (_) {
-        // Dejarlo para el próximo sync — no bloquear el resto
+        if (result?.error || !result?.ID_Cliente) {
+          console.warn('[syncPendingClients] Servidor rechazó cliente:', result?.error);
+          continue;
+        }
+        toDelete.push(c.ID_Cliente);
+        toPut.push(normalizeClient({ ...c, ID_Cliente: result.ID_Cliente }));
+      } catch (err) {
+        // Deja este cliente para el próximo sync — no bloquea el resto
+        console.warn('[syncPendingClients] No se pudo subir cliente', c.ID_Cliente, err);
       }
     }
-  } catch (_) {
-    // Silent — clientes pendientes son opcionales
+
+    // Escribe todos los cambios en una sola transacción — 2 ops en lugar de 2N
+    if (toDelete.length > 0) {
+      await db.transaction('rw', db.clients, async () => {
+        await db.clients.bulkDelete(toDelete);
+        await db.clients.bulkPut(toPut);
+      });
+    }
+  } catch (err) {
+    console.error('[syncPendingClients]', err);
+    throw err; // Propaga para que AppContext pueda notificar si hace falta
   }
 }
 

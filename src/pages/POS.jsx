@@ -13,8 +13,8 @@ import {
   resolvePrice, autoWarehouse, round2,
 } from '../hooks/useCart';
 import { useApp }        from '../context/AppContext';
-import { api }                  from '../services/api';
-import { decrementLocalStock }  from '../services/sync';
+import { api }                              from '../services/api';
+import { decrementLocalStock, LOCAL_ID_PREFIX } from '../services/sync';
 import db                       from '../services/db';
 import SearchInput       from '../components/shared/SearchInput';
 import BarcodeScanner    from '../components/pos/BarcodeScanner';
@@ -74,49 +74,37 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded, isOn
     String(c.Telefono).includes(q)
   );
 
+  // Helper compartido por la ruta offline y online — evita duplicar el objeto
+  const buildClient = (id) => ({
+    ID_Cliente:  id,
+    Nombre:      nombre.trim(),
+    Telefono:    telefono.trim(),
+    Tipo_Precio: tipoPrecio,
+  });
+
   const handleAddClient = async () => {
     if (!nombre.trim()) { setFormErr('El nombre es obligatorio'); return; }
     setSaving(true);
     setFormErr('');
-
-    // ── Sin conexión: guardar localmente con ID temporal ──────────────────
-    // Se sube automáticamente al servidor la próxima vez que haya sync.
-    if (!navigator.onLine) {
-      const tempId = `LOCAL-${Date.now()}`;
-      const newClient = {
-        ID_Cliente:  tempId,
-        Nombre:      nombre.trim(),
-        Telefono:    telefono.trim(),
-        Tipo_Precio: tipoPrecio,
-      };
-      try {
-        await db.clients.put(newClient);
-        onClientAdded?.();
-        onSelect(newClient);
-        onClose();
-      } catch (err) {
-        setFormErr('Error al guardar el cliente localmente');
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
-
-    // ── Con conexión: flujo normal ────────────────────────────────────────
     try {
-      const result = await api.addClient({
-        Nombre:      nombre.trim(),
-        Telefono:    telefono.trim(),
-        Tipo_Precio: tipoPrecio,
-      });
-      if (result?.error) throw new Error(result.error);
-      const newClient = {
-        ID_Cliente:  result.ID_Cliente,
-        Nombre:      nombre.trim(),
-        Telefono:    telefono.trim(),
-        Tipo_Precio: tipoPrecio,
-      };
-      await db.clients.put(newClient);
+      let newClient;
+
+      if (!isOnline) {
+        // Sin conexión: guarda con ID temporal; se sube en el próximo sync
+        newClient = buildClient(`${LOCAL_ID_PREFIX}${Date.now()}`);
+        await db.clients.put(newClient);
+      } else {
+        // Con conexión: flujo normal contra el servidor
+        const result = await api.addClient({
+          Nombre:      nombre.trim(),
+          Telefono:    telefono.trim(),
+          Tipo_Precio: tipoPrecio,
+        });
+        if (result?.error) throw new Error(result.error);
+        newClient = buildClient(result.ID_Cliente);
+        await db.clients.put(newClient);
+      }
+
       onClientAdded?.();
       onSelect(newClient);
       onClose();
@@ -207,7 +195,7 @@ function ClientModal({ clients, selected, onSelect, onClose, onClientAdded, isOn
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="font-medium text-sm truncate">{c.Nombre}</p>
-                        {String(c.ID_Cliente).startsWith('LOCAL-') && (
+                        {String(c.ID_Cliente).startsWith(LOCAL_ID_PREFIX) && (
                           <span className="text-[10px] font-semibold bg-amber-50 text-amber-500
                                            border border-amber-100 px-1 py-0.5 rounded leading-none flex-shrink-0">
                             Local
