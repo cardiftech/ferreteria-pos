@@ -10,6 +10,7 @@ import {
   syncInventory, syncClients, syncPendingClients,
   shouldSync, getLastSyncTime,
 } from '../services/sync';
+import { api } from '../services/api';
 
 const VISIBILITY_SYNC_MS = 30 * 60 * 1000; // re-sync si vuelven tras 30+ min ausente
 
@@ -82,9 +83,6 @@ export function AppProvider({ children }) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'success' });
         dispatch({ type: 'SET_LAST_SYNC',     payload: result.timestamp });
-        // El sync llegó al servidor — conectividad real confirmada.
-        // Corrige el indicador si quedó en "offline" por un fallo anterior.
-        dispatch({ type: 'SET_ONLINE',        payload: true  });
 
         // Orden importa: subir LOCAL-* primero para que tengan ID real antes de
         // que syncClients traiga la lista fresca de Sheets con esos mismos IDs.
@@ -97,11 +95,6 @@ export function AppProvider({ children }) {
       } catch (err) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'error' });
-        // TypeError = error de red (fetch lanzó, no respuesta del servidor).
-        // Actualiza el indicador aunque navigator.onLine diga true.
-        if (err instanceof TypeError) {
-          dispatch({ type: 'SET_ONLINE', payload: false });
-        }
         console.error('[Sync] Error:', err);
         notify('Error sync: ' + (err?.message || 'desconocido'), 'error');
         return null;
@@ -136,15 +129,27 @@ export function AppProvider({ children }) {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [sync]);
 
-  // Auto-recuperación: cuando el indicador quedó en "offline" pero el dispositivo
-  // sigue conectado a la red (WiFi sin internet), reintenta sync tras 30 s.
-  // Si el sync tiene éxito, SET_ONLINE:true restaura el indicador automáticamente.
+  // Recuperación rápida del indicador: cuando state.isOnline fue puesto en false
+  // por una venta fallida (WiFi conectado pero sin internet real), pinga el servidor
+  // inmediatamente y repite cada 5 s hasta confirmar conectividad y restaurar el
+  // indicador. No usa el sync completo — es solo un HEAD rápido con timeout de 4 s.
   useEffect(() => {
-    if (state.isOnline) return;     // ya está en online — nada que hacer
-    if (!navigator.onLine) return;  // sin interfaz de red — no forzar ping
-    const t = setTimeout(() => sync(true), 30_000);
-    return () => clearTimeout(t);
-  }, [state.isOnline, sync]);
+    if (state.isOnline) return;     // ya está online — nada que hacer
+    if (!navigator.onLine) return;  // sin interfaz de red — inútil pingar
+
+    let cancelled = false;
+    const check = async () => {
+      if (cancelled) return;
+      try {
+        await api.fastPing();
+        if (!cancelled) dispatch({ type: 'SET_ONLINE', payload: true });
+      } catch {
+        if (!cancelled) setTimeout(check, 5_000); // reintenta en 5 s
+      }
+    };
+    check(); // intento inmediato al cambiar a offline
+    return () => { cancelled = true; };
+  }, [state.isOnline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <AppContext.Provider value={{ state, dispatch, notify, sync }}>
