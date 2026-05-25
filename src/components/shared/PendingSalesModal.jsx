@@ -63,10 +63,13 @@ export default function PendingSalesModal({ onClose }) {
       // Éxito: marcar como sincronizada.
       // Solo descontar stock si no se hizo ya al guardar offline (stockDecremented).
       await db.pendingSales.update(record.id, { synced: 1, saleId: result.saleId });
+      // Bloqueo visual inmediato: deja el botón deshabilitado aunque liveQuery
+      // tarde un instante en dispararse y quitar el registro de la lista.
+      setS(record.id, 'success');
       if (!record.stockDecremented) {
         decrementLocalStock(record.items).catch(() => {});
       }
-      // liveQuery la eliminará automáticamente de la lista tras el update
+      // liveQuery eliminará el registro de la lista tras el update
     } catch (err) {
       setS(record.id, 'error');
       setE(record.id, err.message || 'Error desconocido — revisa la conexión');
@@ -191,14 +194,16 @@ export default function PendingSalesModal({ onClose }) {
                     {/* Reintentar */}
                     <button
                       onClick={() => handleRetry(record)}
-                      disabled={isRetrying}
+                      disabled={isRetrying || st === 'success'}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl
                                  bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold
                                  transition-colors disabled:opacity-60"
                     >
                       {isRetrying
                         ? <><Loader2 size={13} className="animate-spin" /> Registrando…</>
-                        : <><RefreshCw size={13} /> Reintentar</>}
+                        : st === 'success'
+                          ? <><CheckCircle2 size={13} /> Registrada</>
+                          : <><RefreshCw size={13} /> Reintentar</>}
                     </button>
 
                     {/* Descartar — con confirmación en dos pasos */}

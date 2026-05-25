@@ -484,12 +484,19 @@ export default function POS() {
       ? Math.max(0, (payData.cashReceived || 0) - total)
       : 0;
 
+    // Clave de idempotencia: se genera ANTES de la llamada a la API y se almacena
+    // junto con la venta en pendingSales. GAS la usa para detectar reintentos y
+    // no registrar la misma venta dos veces cuando la red cae después de que el
+    // servidor procesó la venta pero la respuesta no llegó al cliente.
+    const clientSaleId = `PSale-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
     const salePayload = {
       sale: {
         total,
         paymentMethod: payData.method,
         customer:      payData.customer || selectedClient?.Nombre || '',
         notas:         payData.notes || '',
+        clientSaleId,                // clave de idempotencia
       },
       items: cart.items.map(i => ({
         Bar_code:    i.Bar_code,
