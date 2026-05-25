@@ -23,11 +23,9 @@ export function resolvePrice(product, priceLevel) {
   );
 }
 
-// Almacén con más stock (Local por defecto)
+// Almacén preferido al agregar un producto: Local primero, Bodeguita solo si Local = 0
 export function autoWarehouse(product) {
-  return Number(product.Local) >= Number(product.Bodeguita)
-    ? 'Local'
-    : 'Bodeguita';
+  return Number(product.Local) > 0 ? 'Local' : 'Bodeguita';
 }
 
 // ── Reducer ──────────────────────────────────────────────────────────────────
@@ -42,6 +40,19 @@ function cartReducer(state, action) {
       const priceLevel = itemLevel ?? state.priceLevel;
       const existing = state.items.find(i => i.Bar_code === product.Bar_code);
       if (existing) {
+        // Si se solicita cambiar de almacén (p.ej. Local agotado → Bodeguita),
+        // aplicar el cambio y sumar 1 unidad, clampando al stock disponible.
+        if (warehouse && warehouse !== existing.warehouse) {
+          const whStock = Number(warehouse === 'Bodeguita' ? product.Bodeguita : product.Local);
+          return {
+            ...state,
+            items: state.items.map(i =>
+              i.Bar_code === product.Bar_code
+                ? { ...i, warehouse, quantity: Math.min(i.quantity + 1, whStock > 0 ? whStock : i.quantity) }
+                : i
+            ),
+          };
+        }
         return {
           ...state,
           items: state.items.map(i =>

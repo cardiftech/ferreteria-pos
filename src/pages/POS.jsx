@@ -449,10 +449,18 @@ export default function POS() {
     const inCartQty = inCart?.quantity ?? 0;
 
     if (inCartQty >= whStock) {
-      // Avisa si el otro almacén tiene stock disponible.
-      // Compara contra 0, no contra inCartQty: si Bodeguita tiene 3 unidades
-      // y Local ya está lleno en el carrito, "3 > 0" indica correctamente
-      // que hay stock disponible en Bodeguita aunque sea igual a lo del carrito.
+      // Si el almacén actual es Local y Bodeguita tiene stock, cambiar automáticamente.
+      // El cajero no necesita intervenir: simplemente se sigue sumando desde Bodeguita.
+      if (wh === 'Local') {
+        const bodStock = Number(product.Bodeguita);
+        if (bodStock > 0) {
+          addItem(product, { priceLevel, warehouse: 'Bodeguita' });
+          setSearchQuery('');
+          setSearchMode(false);
+          return;
+        }
+      }
+      // Sin alternativa disponible: mostrar aviso
       const otherWh    = wh === 'Bodeguita' ? 'Local' : 'Bodeguita';
       const otherStock = Number(wh === 'Bodeguita' ? product.Local : product.Bodeguita);
       if (otherStock > 0) {

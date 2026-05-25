@@ -10,7 +10,6 @@ import {
   syncInventory, syncClients, syncPendingClients,
   shouldSync, getLastSyncTime,
 } from '../services/sync';
-import { api } from '../services/api';
 
 const VISIBILITY_SYNC_MS = 30 * 60 * 1000; // re-sync si vuelven tras 30+ min ausente
 
@@ -129,13 +128,18 @@ export function AppProvider({ children }) {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [sync]);
 
-  // Verificación activa de conectividad real cada 10 s.
+  // Verificación activa de conectividad real cada 5 s.
   // navigator.onLine NO detecta "WiFi conectado sin internet" — el navegador
   // solo mira si existe una interfaz de red activa, no si hay salida real.
-  // Este efecto hace un ping ligero al servidor para saberlo con certeza:
-  //   • Si el ping responde (cualquier HTTP) → Online confirmado
-  //   • Si el ping lanza TypeError (error de red) → Offline real
-  //   • Si aborta por timeout (GAS frío/lento) → no cambia el indicador
+  //
+  // Se usa un HEAD a gstatic.com/generate_204 (endpoint de Google para checks
+  // de conectividad, idéntico al que usa Android/ChromeOS):
+  //   • Responde en < 100 ms cuando hay internet → Online confirmado.
+  //   • Falla con TypeError INMEDIATAMENTE cuando no hay internet real →
+  //     incluso con WiFi "conectado" al router sin salida a internet.
+  //   • AbortError (3 s de timeout) → resultado incierto, no cambia el indicador.
+  // Esto soluciona el problema de GAS: su cold-start causa AbortError aunque
+  // haya internet, lo que impedía detectar correctamente el estado Online.
   useEffect(() => {
     let cancelled = false;
     let timer;
@@ -143,23 +147,34 @@ export function AppProvider({ children }) {
     const verify = async () => {
       if (cancelled) return;
       if (!navigator.onLine) {
-        // Sin interfaz de red — el evento 'online' del navegador se encargará
-        timer = setTimeout(verify, 10_000);
+        // El navegador ya sabe que no hay interfaz de red
+        if (!cancelled) dispatch({ type: 'SET_ONLINE', payload: false });
+        timer = setTimeout(verify, 5_000);
         return;
       }
+      const ctrl  = new AbortController();
+      const abort = setTimeout(() => ctrl.abort(), 3_000);
       try {
-        await api.fastPing();
+        await fetch('https://www.gstatic.com/generate_204', {
+          method: 'HEAD',
+          mode:   'no-cors',   // evita errores CORS; respuesta opaca confirma conectividad
+          cache:  'no-store',
+          signal: ctrl.signal,
+        });
         if (!cancelled) dispatch({ type: 'SET_ONLINE', payload: true });
       } catch (err) {
-        // Solo marcar Offline en errores de red reales, no en timeouts de GAS
+        // TypeError = sin internet real (fallo inmediato de red)
+        // AbortError = timeout de 3 s (resultado incierto, no cambiar estado)
         if (err.name !== 'AbortError' && !cancelled) {
           dispatch({ type: 'SET_ONLINE', payload: false });
         }
+      } finally {
+        clearTimeout(abort);
       }
-      if (!cancelled) timer = setTimeout(verify, 10_000);
+      if (!cancelled) timer = setTimeout(verify, 5_000);
     };
 
-    timer = setTimeout(verify, 2_000); // primer check 2 s después del mount
+    timer = setTimeout(verify, 1_000); // primer check 1 s después del montaje
     return () => { cancelled = true; clearTimeout(timer); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
