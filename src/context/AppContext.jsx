@@ -129,27 +129,39 @@ export function AppProvider({ children }) {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [sync]);
 
-  // Recuperación rápida del indicador: cuando state.isOnline fue puesto en false
-  // por una venta fallida (WiFi conectado pero sin internet real), pinga el servidor
-  // inmediatamente y repite cada 5 s hasta confirmar conectividad y restaurar el
-  // indicador. No usa el sync completo — es solo un HEAD rápido con timeout de 4 s.
+  // Verificación activa de conectividad real cada 10 s.
+  // navigator.onLine NO detecta "WiFi conectado sin internet" — el navegador
+  // solo mira si existe una interfaz de red activa, no si hay salida real.
+  // Este efecto hace un ping ligero al servidor para saberlo con certeza:
+  //   • Si el ping responde (cualquier HTTP) → Online confirmado
+  //   • Si el ping lanza TypeError (error de red) → Offline real
+  //   • Si aborta por timeout (GAS frío/lento) → no cambia el indicador
   useEffect(() => {
-    if (state.isOnline) return;     // ya está online — nada que hacer
-    if (!navigator.onLine) return;  // sin interfaz de red — inútil pingar
-
     let cancelled = false;
-    const check = async () => {
+    let timer;
+
+    const verify = async () => {
       if (cancelled) return;
+      if (!navigator.onLine) {
+        // Sin interfaz de red — el evento 'online' del navegador se encargará
+        timer = setTimeout(verify, 10_000);
+        return;
+      }
       try {
         await api.fastPing();
         if (!cancelled) dispatch({ type: 'SET_ONLINE', payload: true });
-      } catch {
-        if (!cancelled) setTimeout(check, 5_000); // reintenta en 5 s
+      } catch (err) {
+        // Solo marcar Offline en errores de red reales, no en timeouts de GAS
+        if (err.name !== 'AbortError' && !cancelled) {
+          dispatch({ type: 'SET_ONLINE', payload: false });
+        }
       }
+      if (!cancelled) timer = setTimeout(verify, 10_000);
     };
-    check(); // intento inmediato al cambiar a offline
-    return () => { cancelled = true; };
-  }, [state.isOnline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    timer = setTimeout(verify, 2_000); // primer check 2 s después del mount
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <AppContext.Provider value={{ state, dispatch, notify, sync }}>
