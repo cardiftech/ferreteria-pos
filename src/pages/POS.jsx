@@ -330,7 +330,7 @@ export default function POS() {
 
   const { products }                     = useInventory();
   const { clients, reload: reloadClients } = useClients();
-  const { notify, state, sync }          = useApp();
+  const { notify, state, sync, dispatch } = useApp();
   // searchQuery se actualiza desde SearchInput ya debounced (150ms)
   // → el padre (este componente) NO re-renderiza en cada tecla
   const { results, truncated: searchTruncated } = useSearch(products, searchQuery);
@@ -547,7 +547,37 @@ export default function POS() {
       return;
     }
 
-    const result = await api.registerSale(salePayload);
+    // ── Llamada a la API ── (con fallback si la red falla) ──────────────────
+    // navigator.onLine a veces reporta true aunque no haya internet real
+    // (p. ej. WiFi conectado al router sin salida a internet). Capturamos el
+    // error de fetch aquí para completar la venta localmente en ese caso.
+    let result;
+    try {
+      result = await api.registerSale(salePayload);
+    } catch (netErr) {
+      // Red caída: la venta ya está en pendingSales → completar localmente.
+      // PendingSalesModal la reintentará cuando vuelva la conexión.
+      if (pendingId != null) {
+        db.pendingSales.update(pendingId, { stockDecremented: 1 }).catch(() => {});
+      }
+      dispatch({ type: 'SET_ONLINE', payload: false }); // corrige el indicador
+      setReceipt({
+        saleId:        `TEMP-${pendingId ?? Date.now()}`,
+        items:         [...cart.items],
+        total,
+        paymentMethod: payData.method,
+        cashReceived:  payData.cashReceived || 0,
+        change,
+        customer:      payData.customer || selectedClient?.Nombre || '',
+        notas:         payData.notes   || '',
+        timestamp:     new Date().toISOString(),
+        isOffline:     true,
+      });
+      decrementLocalStock(cart.items).catch(() => {});
+      clearCart();
+      setShowPay(false);
+      return;
+    }
     if (result?.error) throw new Error(result.error);
 
     // API exitosa: marca la entrada como sincronizada

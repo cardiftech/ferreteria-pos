@@ -82,6 +82,9 @@ export function AppProvider({ children }) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'success' });
         dispatch({ type: 'SET_LAST_SYNC',     payload: result.timestamp });
+        // El sync llegó al servidor — conectividad real confirmada.
+        // Corrige el indicador si quedó en "offline" por un fallo anterior.
+        dispatch({ type: 'SET_ONLINE',        payload: true  });
 
         // Orden importa: subir LOCAL-* primero para que tengan ID real antes de
         // que syncClients traiga la lista fresca de Sheets con esos mismos IDs.
@@ -94,6 +97,11 @@ export function AppProvider({ children }) {
       } catch (err) {
         dispatch({ type: 'SET_SYNC_PROGRESS', payload: null });
         dispatch({ type: 'SET_SYNC_STATUS',   payload: 'error' });
+        // TypeError = error de red (fetch lanzó, no respuesta del servidor).
+        // Actualiza el indicador aunque navigator.onLine diga true.
+        if (err instanceof TypeError) {
+          dispatch({ type: 'SET_ONLINE', payload: false });
+        }
         console.error('[Sync] Error:', err);
         notify('Error sync: ' + (err?.message || 'desconocido'), 'error');
         return null;
@@ -127,6 +135,16 @@ export function AppProvider({ children }) {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [sync]);
+
+  // Auto-recuperación: cuando el indicador quedó en "offline" pero el dispositivo
+  // sigue conectado a la red (WiFi sin internet), reintenta sync tras 30 s.
+  // Si el sync tiene éxito, SET_ONLINE:true restaura el indicador automáticamente.
+  useEffect(() => {
+    if (state.isOnline) return;     // ya está en online — nada que hacer
+    if (!navigator.onLine) return;  // sin interfaz de red — no forzar ping
+    const t = setTimeout(() => sync(true), 30_000);
+    return () => clearTimeout(t);
+  }, [state.isOnline, sync]);
 
   return (
     <AppContext.Provider value={{ state, dispatch, notify, sync }}>
