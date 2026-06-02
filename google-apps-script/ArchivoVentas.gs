@@ -25,7 +25,7 @@
 
 /** ID del Google Sheets de almacenamiento histórico.
  *  Déjalo vacío ('') la primera vez; el script lo crea y te dice el ID. */
-var ARCHIVE_SS_ID = '';
+var ARCHIVE_SS_ID = '1_rwdVii7e5pV8cM8AT11il49bl1HbR4dHBmjdkWt7tM';
 
 /** Nombre del archivo que se crea si ARCHIVE_SS_ID está vacío. */
 var ARCHIVE_FILE_NAME = 'Archivo de Ventas — El Obraje';
