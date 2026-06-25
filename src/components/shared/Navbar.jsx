@@ -1,12 +1,16 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Wifi, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { usePendingSalesCount } from '../../hooks/usePendingSalesCount';
+import { useStockCoverage } from '../../hooks/useStockCoverage';
 import PendingSalesModal from './PendingSalesModal';
 
 export default function Navbar() {
   const { state, sync }  = useApp();
   const pendingCount     = usePendingSalesCount();
+  const { pct: coveragePct } = useStockCoverage();
+  const navigate         = useNavigate();
   const [showPending, setShowPending] = useState(false);
   const syncStatus       = state.syncStatus;
   const progress         = state.syncProgress;  // { loaded, total | null } | null
@@ -43,6 +47,16 @@ export default function Navbar() {
                   {pendingCount === 1
                     ? '1 venta sin registrar'
                     : `${pendingCount} ventas sin registrar`}
+                </button>
+              ) : coveragePct !== null && coveragePct < 100 ? (
+                /* Recordatorio sutil de cobertura — clic lleva a Inventario a completar stock */
+                <button
+                  onClick={() => navigate('/inventory')}
+                  title="Ver inventario — completa el stock de los productos faltantes"
+                  className="text-xs text-gray-400 leading-none mt-0.5 hover:text-gray-600
+                             transition-colors cursor-pointer"
+                >
+                  <span className="font-semibold text-gray-500">{coveragePct}%</span> inventario cargado
                 </button>
               ) : (
                 <p className="text-xs text-gray-400 leading-none mt-0.5">Punto de Venta &amp; Inventario</p>
