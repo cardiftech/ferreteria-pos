@@ -25,7 +25,13 @@ const initialState = {
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'SET_ONLINE':       return { ...state, isOnline: action.payload };
+    // Bail-out si el valor no cambia: el ping de conectividad despacha SET_ONLINE
+    // cada 5 s. Sin esta guarda, devolver un objeto nuevo cada vez re-renderizaría
+    // TODA la app (POS, Navbar, listas) cada 5 s aunque el estado sea el mismo.
+    case 'SET_ONLINE':
+      return state.isOnline === action.payload
+        ? state
+        : { ...state, isOnline: action.payload };
     case 'SET_SYNC_STATUS':   return { ...state, syncStatus:   action.payload };
     case 'SET_SYNC_PROGRESS': return { ...state, syncProgress: action.payload };
     case 'SET_LAST_SYNC':     return { ...state, lastSync:     action.payload };

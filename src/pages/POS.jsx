@@ -449,16 +449,18 @@ export default function POS() {
     const inCartQty = inCart?.quantity ?? 0;
 
     if (inCartQty >= whStock) {
-      // Si el almacén actual es Local y Bodeguita tiene stock, cambiar automáticamente.
-      // El cajero no necesita intervenir: simplemente se sigue sumando desde Bodeguita.
-      if (wh === 'Local') {
-        const bodStock = Number(product.Bodeguita);
-        if (bodStock > 0) {
-          addItem(product, { priceLevel, warehouse: 'Bodeguita' });
-          setSearchQuery('');
-          setSearchMode(false);
-          return;
-        }
+      // Si el almacén actual es Local y Bodeguita tiene MÁS unidades de las que ya
+      // hay en el carrito, cambiar automáticamente y seguir sumando desde Bodeguita.
+      // La condición `bodStock > inCartQty` es clave: como cada línea del carrito
+      // usa un solo almacén, cambiar a Bodeguita reasigna TODA la cantidad a ese
+      // almacén. Si Bodeguita tuviera ≤ que lo ya cargado (p.ej. Local=2, Bod=1),
+      // el clamp reduciría la cantidad — pulsar "+" bajaría el total. Solo cambiamos
+      // cuando realmente se gana al menos una unidad.
+      if (wh === 'Local' && Number(product.Bodeguita) > inCartQty) {
+        addItem(product, { priceLevel, warehouse: 'Bodeguita' });
+        setSearchQuery('');
+        setSearchMode(false);
+        return;
       }
       // Sin alternativa disponible: mostrar aviso
       const otherWh    = wh === 'Bodeguita' ? 'Local' : 'Bodeguita';
