@@ -9,6 +9,7 @@ import db                        from '../services/db';
 import SearchInput               from '../components/shared/SearchInput';
 import ProductTable              from '../components/inventory/ProductTable';
 import ProductForm               from '../components/inventory/ProductForm';
+import InventoryCoverageCard     from '../components/inventory/InventoryCoverageCard';
 import BarcodeScanner            from '../components/pos/BarcodeScanner';
 
 /** Convierte una fecha ISO a texto relativo: "hace 5 min", "hace 2 h", etc. */
@@ -32,6 +33,7 @@ export default function Inventory() {
   const [formMode, setFormMode] = useState('new');
   const [saving, setSaving]     = useState(false);
   const [visible, setVisible]   = useState(PAGE_SIZE);
+  const [showOnlyNoStock, setShowOnlyNoStock] = useState(false);
   const [scanInventory, setScanInventory] = useState(false);
   const [lastSyncLabel, setLastSyncLabel] = useState('');
   const sentinelRef = useRef(null); // elemento centinela para IntersectionObserver
@@ -51,11 +53,20 @@ export default function Inventory() {
   // Callback estable para SearchInput
   const handleSearch = useCallback((val) => setSearchQuery(val), []);
 
-  // Reiniciar paginación al cambiar búsqueda
-  useEffect(() => setVisible(PAGE_SIZE), [searchQuery]);
+  // Reiniciar paginación al cambiar búsqueda o al activar/quitar el filtro
+  useEffect(() => setVisible(PAGE_SIZE), [searchQuery, showOnlyNoStock]);
 
-  const shown   = results.slice(0, visible);
-  const hasMore = results.length > visible;
+  // Filtro opcional "solo sin existencias" — se aplica DESPUÉS de la búsqueda
+  // para que ambos puedan combinarse (buscar dentro de los productos sin stock).
+  const filtered = useMemo(
+    () => (showOnlyNoStock
+      ? results.filter(p => Number(p.Stock_Actual) <= 0)
+      : results),
+    [results, showOnlyNoStock]
+  );
+
+  const shown   = filtered.slice(0, visible);
+  const hasMore = filtered.length > visible;
 
   // Infinite scroll: cuando el centinela es visible, carga más filas
   useEffect(() => {
@@ -74,6 +85,13 @@ export default function Inventory() {
     () => products.filter(
       p => Number(p.Stock_Minimo) > 0 && Number(p.Stock_Actual) <= Number(p.Stock_Minimo)
     ).length,
+    [products]
+  );
+
+  // Productos sin existencias (Stock_Actual <= 0) — no se pueden vender hasta
+  // cargar su stock. Alimenta la tarjeta de cobertura de inventario.
+  const noStockCount = useMemo(
+    () => products.filter(p => Number(p.Stock_Actual) <= 0).length,
     [products]
   );
 
@@ -241,6 +259,14 @@ export default function Inventory() {
         </div>
       </div>
 
+      {/* Cobertura de inventario — productos sin existencias */}
+      <InventoryCoverageCard
+        total={products.length}
+        withoutStock={noStockCount}
+        filterActive={showOnlyNoStock}
+        onToggleFilter={() => setShowOnlyNoStock(v => !v)}
+      />
+
       {/* Buscador — SearchInput gestiona su propio valor internamente */}
       <SearchInput
         onSearch={handleSearch}
@@ -254,12 +280,16 @@ export default function Inventory() {
         <div className="flex justify-center py-20">
           <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : results.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="bg-white rounded-xl p-12 text-center text-gray-400 shadow-sm border border-gray-100">
           <p className="text-sm">
-            {searchQuery
-              ? `Sin resultados para "${searchQuery}"`
-              : 'No hay productos — sincroniza o agrega uno nuevo'}
+            {showOnlyNoStock
+              ? (searchQuery
+                  ? `Ningún producto sin stock coincide con "${searchQuery}"`
+                  : '¡Todos los productos tienen existencias! 🎉')
+              : searchQuery
+                ? `Sin resultados para "${searchQuery}"`
+                : 'No hay productos — sincroniza o agrega uno nuevo'}
           </p>
         </div>
       ) : (
@@ -274,7 +304,8 @@ export default function Inventory() {
           )}
 
           <p className="text-center text-xs text-gray-400 pb-2">
-            Mostrando {shown.length} de {results.length} productos
+            Mostrando {shown.length} de {filtered.length} productos
+            {showOnlyNoStock && ' sin existencias'}
           </p>
         </>
       )}
