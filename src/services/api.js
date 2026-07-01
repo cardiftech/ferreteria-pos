@@ -77,6 +77,15 @@ export const api = {
   getClients: () =>
     request({ params: { action: 'getClients' } }),
 
+  // Ventas recientes de la hoja VENTAS (más nueva primero). limit = cuántas traer.
+  getSales: ({ limit = 200 } = {}) =>
+    request({ params: { action: 'getSales', limit } }),
+
+  // Reporte completo (ventas + inventario). Respaldo de SOLO LECTURA para el
+  // monitor de ventas cuando el Code.gs aún no tiene getSales desplegado.
+  getSalesReport: () =>
+    request({ params: { action: 'getSalesReport' } }),
+
   registerSale: (data) =>
     request({ method: 'POST', body: { action: 'registerSale', ...data } }),
 
@@ -88,6 +97,14 @@ export const api = {
 
   addClient: (client) =>
     request({ method: 'POST', body: { action: 'addClient', client } }),
+
+  // Edita campos básicos de una venta (Total, Metodo_Pago, Cliente, Notas) por ID_Venta.
+  updateSale: (sale) =>
+    request({ method: 'POST', body: { action: 'updateSale', sale } }),
+
+  // Elimina una venta por ID_Venta. No restaura stock — solo quita el registro.
+  deleteSale: (sale) =>
+    request({ method: 'POST', body: { action: 'deleteSale', sale } }),
 
   ping: () =>
     request({ params: { action: 'ping' } }),

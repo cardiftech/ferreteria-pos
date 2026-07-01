@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { ShoppingCart, Package } from 'lucide-react';
+import { ShoppingCart, Package, Receipt } from 'lucide-react';
 import { useLowStockCount } from '../../hooks/useLowStockCount';
 
 export default function BottomNav() {
@@ -37,6 +37,17 @@ export default function BottomNav() {
           )}
         </div>
         <span>Inventario</span>
+      </NavLink>
+
+      <NavLink
+        to="/sales"
+        className={({ isActive }) =>
+          `flex-1 flex flex-col items-center justify-center py-2 gap-0.5 text-xs font-medium transition-colors
+           ${isActive ? 'text-orange-500' : 'text-gray-400 hover:text-gray-600'}`
+        }
+      >
+        <Receipt size={22} />
+        <span>Ventas</span>
       </NavLink>
     </nav>
   );

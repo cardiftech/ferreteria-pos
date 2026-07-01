@@ -47,6 +47,7 @@ function doGet(e) {
     if (action === 'getInventory')   return jsonOk(getInventory_(offset, limit));
     if (action === 'getClients')     return jsonOk(getClients_());
     if (action === 'getSalesReport') return jsonOk(getSalesReport_());
+    if (action === 'getSales')       return jsonOk(getSales_(limit));
     if (action === 'ping')           return jsonOk({ status: 'ok', ts: new Date().toISOString() });
     return jsonErr('Acción GET desconocida: ' + action, 400);
   } catch (err) {
@@ -67,6 +68,8 @@ function doPost(e) {
     if (action === 'updateProduct') return jsonOk(updateProduct_(payload));
     if (action === 'addProduct')    return jsonOk(addProduct_(payload));
     if (action === 'addClient')     return jsonOk(addClient_(payload));
+    if (action === 'updateSale')    return jsonOk(updateSale_(payload));
+    if (action === 'deleteSale')    return jsonOk(deleteSale_(payload));
 
     return jsonErr('Acción POST desconocida: ' + action, 400);
   } catch (err) {
@@ -200,6 +203,102 @@ function getSalesReport_() {
   }
 
   return { products: products, sales: sales, timestamp: now_() };
+}
+
+/**
+ * Devuelve las ventas más recientes de VENTAS (más nueva primero).
+ * limit = cuántas devolver (0 = todas). Lee solo el bloque final de filas
+ * para no cargar toda la hoja cuando el historial crece.
+ *
+ * Respuesta: { data, total, timestamp }. Cada fila incluye todas las columnas,
+ * con Fecha en ISO y Total numérico.
+ */
+function getSales_(limit) {
+  var sheet   = getSheet_(TAB_SALES);
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) {
+    return { data: [], total: 0, timestamp: now_() };
+  }
+
+  var headers  = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var total    = lastRow - 1;
+  var count    = (limit && limit > 0) ? Math.min(limit, total) : total;
+  var startRow = lastRow - count + 1;               // bloque final = más recientes
+  var values   = sheet.getRange(startRow, 1, count, lastCol).getValues();
+
+  var data = values.map(function(row) {
+    var obj = {};
+    headers.forEach(function(h, i) { obj[String(h)] = row[i]; });
+    var fechaRaw = obj.Fecha;
+    obj.Fecha = (fechaRaw instanceof Date) ? fechaRaw.toISOString()
+              : (fechaRaw ? String(fechaRaw) : '');
+    obj.Total = Number(obj.Total) || 0;
+    return obj;
+  }).reverse();                                     // más reciente primero
+
+  return { data: data, total: total, timestamp: now_() };
+}
+
+/**
+ * Edita campos básicos de una venta existente (búsqueda por ID_Venta con TextFinder).
+ * Solo permite modificar: Total, Metodo_Pago, Cliente, Notas.
+ * NO toca Productos ni el stock — es solo corrección de metadatos de la venta.
+ */
+function updateSale_(payload) {
+  var sale = payload.sale || {};
+  var id   = String(sale.ID_Venta || '').trim();
+  if (!id) throw new Error('ID_Venta es obligatorio');
+
+  var sheet   = getSheet_(TAB_SALES);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) throw new Error('No hay ventas registradas');
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var idCol   = headers.indexOf('ID_Venta');
+  if (idCol === -1) throw new Error('Columna ID_Venta no encontrada');
+
+  var idRange = sheet.getRange(2, idCol + 1, lastRow - 1, 1);
+  var match   = idRange.createTextFinder(id).matchEntireCell(true).findNext();
+  if (!match) throw new Error('Venta no encontrada: ' + id);
+  var row = match.getRow();
+
+  var EDITABLE = ['Total', 'Metodo_Pago', 'Cliente', 'Notas'];
+  var changed  = [];
+  EDITABLE.forEach(function(field) {
+    if (sale[field] === undefined) return;
+    var col = headers.indexOf(field);
+    if (col === -1) return;
+    var value = (field === 'Total') ? (Number(sale[field]) || 0) : sale[field];
+    sheet.getRange(row, col + 1).setValue(value);
+    changed.push(field);
+  });
+
+  return { success: true, message: 'Venta actualizada', changed: changed };
+}
+
+/**
+ * Elimina una venta de VENTAS (búsqueda por ID_Venta con TextFinder).
+ * ADVERTENCIA: NO restaura stock — solo para quitar registros erróneos.
+ */
+function deleteSale_(payload) {
+  var id = String((payload.sale && payload.sale.ID_Venta) || payload.ID_Venta || '').trim();
+  if (!id) throw new Error('ID_Venta es obligatorio');
+
+  var sheet   = getSheet_(TAB_SALES);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) throw new Error('No hay ventas registradas');
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var idCol   = headers.indexOf('ID_Venta');
+  if (idCol === -1) throw new Error('Columna ID_Venta no encontrada');
+
+  var idRange = sheet.getRange(2, idCol + 1, lastRow - 1, 1);
+  var match   = idRange.createTextFinder(id).matchEntireCell(true).findNext();
+  if (!match) throw new Error('Venta no encontrada: ' + id);
+
+  sheet.deleteRow(match.getRow());
+  return { success: true, message: 'Venta eliminada' };
 }
 
 /**

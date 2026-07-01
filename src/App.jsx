@@ -3,6 +3,7 @@ import { AppProvider } from './context/AppContext';
 import Layout from './components/shared/Layout';
 import POS from './pages/POS';
 import Inventory from './pages/Inventory';
+import Sales from './pages/Sales';
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/pos" replace />} />
           <Route path="/pos" element={<POS />} />
           <Route path="/inventory" element={<Inventory />} />
+          <Route path="/sales" element={<Sales />} />
         </Routes>
       </Layout>
     </AppProvider>
