@@ -93,11 +93,6 @@ export default function Sales() {
     );
   }, [sales, searchQuery]);
 
-  const sumTotal = useMemo(
-    () => filtered.reduce((s, v) => s + (Number(v.Total) || 0), 0),
-    [filtered]
-  );
-
   // Actualiza la lista tras editar/eliminar sin recargar todo
   const handleSaved = (updated) => {
     setSales(prev => prev.map(s => (s.ID_Venta === updated.ID_Venta ? { ...s, ...updated } : s)));
@@ -149,19 +144,11 @@ export default function Sales() {
 
       {/* Resumen (solo con datos) */}
       {sales.length > 0 && !errorKind && (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-gray-100">
-            <p className="text-xs text-gray-400">Ventas mostradas</p>
-            <p className="text-xl font-bold text-gray-900 leading-tight mt-0.5">
-              {filtered.length.toLocaleString('es-MX')}
-            </p>
-          </div>
-          <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-gray-100">
-            <p className="text-xs text-gray-400">Suma mostrada</p>
-            <p className="text-xl font-bold text-green-600 leading-tight mt-0.5">
-              ${sumTotal.toLocaleString('es-MX')}
-            </p>
-          </div>
+        <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-400">Ventas mostradas</p>
+          <p className="text-xl font-bold text-gray-900 leading-tight mt-0.5">
+            {filtered.length.toLocaleString('es-MX')}
+          </p>
         </div>
       )}
 
