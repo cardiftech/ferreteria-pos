@@ -20,6 +20,7 @@ import SearchInput       from '../components/shared/SearchInput';
 import BarcodeScanner    from '../components/pos/BarcodeScanner';
 import PaymentModal      from '../components/pos/PaymentModal';
 import Receipt           from '../components/pos/Receipt';
+import InventoryCoverageBanner from '../components/pos/InventoryCoverageBanner';
 
 const PAYMENT_METHODS = [
   { id: 'Efectivo',      label: 'Efectivo',      emoji: '💵' },
@@ -619,6 +620,10 @@ export default function POS() {
     <>
       {/* ── Área principal ─────────────────────────────────────────────── */}
       <div className={BOTTOM_PANEL_H}>
+
+        {/* Aviso prominente de cobertura — solo en la pantalla principal,
+            oculto mientras se busca para no estorbar los resultados */}
+        {!searchMode && <InventoryCoverageBanner />}
 
         {/* Búsqueda por texto */}
         {searchMode ? (

@@ -7,8 +7,9 @@
  *   • withStock    — total - withoutStock
  *   • pct          — % con stock (entero 0-100), o null si aún no hay inventario
  *
- * Usa liveQuery con .count() sobre un cursor de Dexie (bajo consumo de memoria,
- * no carga los 16k+ productos) y se actualiza solo tras cada sync o restock.
+ * Usa liveQuery con .count() indexado (índice Stock_Actual — bajo consumo de
+ * memoria, no deserializa los 16k+ productos) y se actualiza tras cada sync,
+ * venta o restock.
  */
 import { useState, useEffect } from 'react';
 import { liveQuery } from 'dexie';
@@ -21,9 +22,14 @@ export function useStockCoverage() {
 
   useEffect(() => {
     const sub = liveQuery(async () => {
-      const total        = await db.inventory.count();
+      const total = await db.inventory.count();
+      // Cuenta sobre el índice Stock_Actual (belowOrEqual) en vez de un filtro JS:
+      // no deserializa los 16k+ productos. Importa porque este liveQuery se recalcula
+      // en cada venta (decrementLocalStock escribe stock) y está montado en dos
+      // lugares a la vez (subtítulo de la navbar + banner del POS).
       const withoutStock = await db.inventory
-        .filter(p => Number(p.Stock_Actual) <= 0)
+        .where('Stock_Actual')
+        .belowOrEqual(0)
         .count();
       return { total, withoutStock };
     }).subscribe({

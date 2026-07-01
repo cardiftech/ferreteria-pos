@@ -11,7 +11,23 @@
       "Bash(npx vercel *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(vercel --version)",
+      "Bash(vercel --prod)",
+      "Bash(vercel env *)",
+      "Bash(cat .env)",
+      "Bash(cat .env.local)",
+      "Bash(cat .env.production)",
+      "Bash(curl -s \"https://script.google.com/macros/s/AKfycbzDfH_7ZY1q7kOiXFDk5LxeM5UQBY5BvWJrNcuUYhTYr4kWhljPYzIMPtrEbO752PBCCQ/exec?action=ping\")",
+      "Bash(curl -L -s \"https://script.google.com/macros/s/AKfycbzDfH_7ZY1q7kOiXFDk5LxeM5UQBY5BvWJrNcuUYhTYr4kWhljPYzIMPtrEbO752PBCCQ/exec?action=ping\")",
+      "Bash(curl -L -s \"https://script.google.com/macros/s/AKfycbzDfH_7ZY1q7kOiXFDk5LxeM5UQBY5BvWJrNcuUYhTYr4kWhljPYzIMPtrEbO752PBCCQ/exec?action=getInventory&offset=0&limit=5\")",
+      "Bash(dir \"C:\\\\Users\\\\USER\\\\Desktop\\\\FERRETERIA\\\\public\")",
+      "Bash(dir \"C:\\\\Users\\\\USER\\\\Desktop\\\\FERRETERIA\" /b)",
+      "Bash(node -e ' *)",
+      "Bash(del \"C:\\\\Users\\\\USER\\\\Desktop\\\\FERRETERIA\\\\src\\\\hooks\\\\useSync.js\")",
+      "Bash(node -e *)",
+      "Bash(vercel whoami *)",
+      "Bash(vercel ls *)"
     ]
   }
 }

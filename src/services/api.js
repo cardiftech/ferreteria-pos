@@ -91,18 +91,4 @@ export const api = {
 
   ping: () =>
     request({ params: { action: 'ping' } }),
-
-  // Verificación rápida de conectividad: timeout corto, sin reintentos.
-  // Usada por AppContext para recuperar el indicador Online/Offline después
-  // de que una venta falló por red (WiFi conectado pero sin internet real).
-  fastPing: () => {
-    if (!GAS_URL || GAS_URL.includes('TU_SCRIPT_ID')) return Promise.reject(new Error('no-url'));
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 4_000);
-    return fetch(`${GAS_URL}?action=ping`, {
-      signal:   ctrl.signal,
-      redirect: 'follow',
-      cache:    'no-store',
-    });
-  },
 };
