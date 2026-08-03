@@ -360,8 +360,9 @@ export default function POS() {
   physicalScan.current = (barcode) => {
     const found = products.find(p => String(p.Bar_code).trim() === barcode.trim());
     if (found) {
-      handleAdd(found);
-      setLastScanned(`✓ ${found.Descripcion}`);
+      // Solo confirma si realmente entró al carrito (handleAdd puede rechazarlo
+      // por falta de precio o de stock, y en ese caso ya mostró su propio aviso).
+      setLastScanned(handleAdd(found) ? `✓ ${found.Descripcion}` : '');
     } else {
       notify(`Código no encontrado: ${barcode}`, 'warning');
       setLastScanned('');
@@ -443,7 +444,21 @@ export default function POS() {
   };
 
   // ── Agregar producto ────────────────────────────────────────────────────────
+  // Devuelve true si el producto entró al carrito, false si fue rechazado.
+  // Los escáneres usan ese valor para no dar feedback de éxito cuando no se agregó.
   const handleAdd = (product) => {
+    // GUARDIA DE PRECIO: nunca permitir vender en $0.
+    // resolvePrice cae a Precio_publico_IVA si el nivel activo está vacío; si aun
+    // así da 0, el producto no tiene precio utilizable y venderlo lo regalaría.
+    // Cubre los 3 caminos de alta (búsqueda, escáner físico y cámara).
+    if (!(resolvePrice(product, priceLevel) > 0)) {
+      notify(
+        `"${product.Descripcion}" no tiene precio asignado — configúralo en Inventario`,
+        'error'
+      );
+      return false;
+    }
+
     const inCart    = cart.items.find(i => i.Bar_code === product.Bar_code);
     const wh        = inCart?.warehouse || autoWarehouse(product);
     const whStock   = Number(wh === 'Bodeguita' ? product.Bodeguita : product.Local);
@@ -461,7 +476,7 @@ export default function POS() {
         addItem(product, { priceLevel, warehouse: 'Bodeguita' });
         setSearchQuery('');
         setSearchMode(false);
-        return;
+        return true;
       }
       // Sin alternativa disponible: mostrar aviso
       const otherWh    = wh === 'Bodeguita' ? 'Local' : 'Bodeguita';
@@ -471,19 +486,24 @@ export default function POS() {
       } else {
         notify(`Sin stock disponible (${Number(product.Stock_Actual)} uds en total)`, 'warning');
       }
-      return;
+      return false;
     }
     addItem(product, { priceLevel, warehouse: wh });
     setSearchQuery('');
     setSearchMode(false);
+    return true;
   };
 
   // ── Escáner ─────────────────────────────────────────────────────────────────
   const handleScan = (barcode, showFeedback) => {
     const found = products.find(p => String(p.Bar_code).trim() === barcode.trim());
     if (found) {
-      handleAdd(found);
-      showFeedback?.(`✓ ${found.Descripcion}`, true);
+      // handleAdd devuelve false si lo rechazó (sin precio / sin stock)
+      const added = handleAdd(found);
+      showFeedback?.(
+        added ? `✓ ${found.Descripcion}` : `Sin precio: ${found.Descripcion}`,
+        added
+      );
     } else {
       showFeedback?.(`No encontrado: ${barcode}`, false);
     }
@@ -741,10 +761,11 @@ export default function POS() {
                   }}
                 >
                   {rowVirtualizer.getVirtualItems().map(virtualItem => {
-                    const p     = results[virtualItem.index];
-                    const stock = Number(p.Stock_Actual);
-                    const price = resolvePrice(p, priceLevel);
-                    const out   = stock <= 0;
+                    const p       = results[virtualItem.index];
+                    const stock   = Number(p.Stock_Actual);
+                    const price   = resolvePrice(p, priceLevel);
+                    const noPrice = !(price > 0);   // sin precio utilizable → no vendible
+                    const out     = stock <= 0 || noPrice;
                     return (
                       <div
                         key={p.Bar_code}
@@ -769,15 +790,19 @@ export default function POS() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-sm text-gray-900 truncate">{p.Descripcion}</p>
-                            <p className="text-xs text-gray-400">
-                              {out
-                                ? 'Sin stock'
-                                : `Stock: ${stock} (Local: ${Number(p.Local)} | Bodeguita: ${Number(p.Bodeguita)})`}
+                            <p className={`text-xs ${noPrice ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                              {noPrice
+                                ? 'Sin precio — configúralo en Inventario'
+                                : stock <= 0
+                                  ? 'Sin stock'
+                                  : `Stock: ${stock} (Local: ${Number(p.Local)} | Bodeguita: ${Number(p.Bodeguita)})`}
                             </p>
                             {p.PROVEEDOR && <p className="text-xs text-gray-300">{p.PROVEEDOR}</p>}
                           </div>
                           <div className="flex-shrink-0 text-right">
-                            <p className="font-bold text-orange-600 text-sm">${price.toLocaleString('es-MX')}</p>
+                            <p className={`font-bold text-sm ${noPrice ? 'text-red-400' : 'text-orange-600'}`}>
+                              {noPrice ? 'Sin precio' : `$${price.toLocaleString('es-MX')}`}
+                            </p>
                             <p className="text-xs text-gray-300">{p.Unidad || ''}</p>
                             <div className="mt-1 w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center ml-auto">
                               <Plus size={12} className="text-white" />
