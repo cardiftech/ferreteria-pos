@@ -138,7 +138,14 @@ export default function BarcodeScanner({
                       {/* Nombre + precio + almacén */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{item.Descripcion}</p>
-                        <p className="text-xs text-gray-400">${item.activePrice.toLocaleString('es-MX')} c/u</p>
+                        <p className="text-xs text-gray-400">
+                          ${item.activePrice.toLocaleString('es-MX')} c/u
+                          {String(item.Codigo ?? '').trim() ? (
+                            <span className="ml-1.5 font-mono text-gray-500 whitespace-nowrap">
+                              · {String(item.Codigo).trim()}
+                            </span>
+                          ) : null}
+                        </p>
                         {onSetWarehouse && (
                           <div className="flex gap-1 mt-1">
                             {['Local', 'Bodeguita'].map(wh => {
